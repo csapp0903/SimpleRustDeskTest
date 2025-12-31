@@ -1,233 +1,344 @@
 #include "RemoteInputSimulator.h"
 #include "LogWidget.h"
 #include <Windows.h>
-#include <QKeyEvent> 
+#include <QKeyEvent>
 #include <QTimer>
 
-enum MouseMask {
-	MouseMove = 0x01, // Êó±êÒÆ¶¯
-	MouseLeftDown = 0x02, // Êó±ê×ó¼ü°´ÏÂ
-	MouseLeftUp = 0x04, // Êó±ê×ó¼üÊÍ·Å
-	MouseDoubleClick = 0x08, // Êó±ê×ó¼üË«»÷
-	MouseRightClick = 0x10, // Êó±êÓÒ¼üµ¥»÷
-	MouseMiddleClick = 0x20  // Êó±êÖĞ¼üµ¥»÷
-};
-
+#define POINTER_TOUCH_ID_MAX 33554433
+#define POINTER_TOUCH_SPACE  10
 
 RemoteInputSimulator::RemoteInputSimulator(QObject* parent)
-	: QObject(parent)
+    : QObject(parent)
 {
-	m_workerThread = new QThread;
-	this->moveToThread(m_workerThread);
-	connect(m_workerThread, &QThread::finished, this, &QObject::deleteLater);
-	m_workerThread->start();
+    m_workerThread = new QThread;
+    this->moveToThread(m_workerThread);
+    connect(m_workerThread, &QThread::finished, this, &QObject::deleteLater);
+    m_workerThread->start();
+
+    // åœ¨æ³¨å…¥å‰è®¾ç½®æœ€é«˜ä¼˜å…ˆçº§
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    SetPriorityClass(GetCurrentProcess(), REALTIME_PRIORITY_CLASS);
+
+    // åˆå§‹åŒ–è§¦æ‘¸
+    InitializeTouchInjection(10, TOUCH_FEEDBACK_DEFAULT);
 }
 
-void RemoteInputSimulator::handleMouseEvent(int x, int y, int mask)
+void RemoteInputSimulator::handleMouseEvent(int x, int y, int mask, int value)
 {
-	// »ñÈ¡µ±Ç°Ç°Ì¨´°¿Ú£¬²¢³¢ÊÔ¼¤»î
-	HWND targetHwnd = GetForegroundWindow();
-	if (targetHwnd) {
-		if (!SetForegroundWindow(targetHwnd)) {
-			LogWidget::instance()->addLog("Failed to set foreground window in handleMouseEvent", LogWidget::Warning);
-		}
-	}
-	else {
-		LogWidget::instance()->addLog("No foreground window found in handleMouseEvent", LogWidget::Warning);
-	}
+    LogWidget::instance()->addLog("handleMouseEvent------"+QString::number(x), LogWidget::Debug);
 
-	// ¼ÆËãÆÁÄ»¹éÒ»»¯×ø±ê£¨SendInput ÒªÇó 0¡«65535£©
-	int screenX = (65535 * x) / GetSystemMetrics(SM_CXSCREEN);
-	int screenY = (65535 * y) / GetSystemMetrics(SM_CYSCREEN);
+    // è·å–å½“å‰å‰å°çª—å£,å¹¶å°è¯•æ¿€æ´»
+    HWND targetHwnd = GetForegroundWindow();
+    if (targetHwnd)
+    {
+        if (!SetForegroundWindow(targetHwnd))
+        {
+            LogWidget::instance()->addLog("Failed to set foreground window in handleMouseEvent", LogWidget::Warning);
+        }
+    }
+    else
+    {
+        LogWidget::instance()->addLog("No foreground window found in handleMouseEvent", LogWidget::Warning);
+    }
 
-	// ¶¨ÒåÊó±êÒÆ¶¯ÊÂ¼ş
-	INPUT moveInput = {};
-	moveInput.type = INPUT_MOUSE;
-	moveInput.mi.dx = screenX;
-	moveInput.mi.dy = screenY;
-	moveInput.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+    // è®¡ç®—å±å¹•å½’ä¸€åŒ–åæ ‡(SendInput è¦æ±‚ 0~65535)
+    x = x * 1.0 / 1920.0 * 2560.0;
+    y = y * 1.0 / 1080.0 * 1440.0;
+    int screenX = (65535 * x) / GetSystemMetrics(SM_CXSCREEN);
+    int screenY = (65535 * y) / GetSystemMetrics(SM_CYSCREEN);
 
-	// Èç¹ûĞèÒªË«»÷£¬Ôò²ÉÓÃ QTimer ÑÓÊ±´¦Àí±ÜÃâ×èÈû
-	if (mask & MouseDoubleClick) {
-		// ¹¹ÔìÒ»´Î×ó¼üµã»÷£¨°´ÏÂºÍÊÍ·Å£©
-		INPUT leftDown = {};
-		leftDown.type = INPUT_MOUSE;
-		leftDown.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-		INPUT leftUp = {};
-		leftUp.type = INPUT_MOUSE;
-		leftUp.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    //LogWidget::instance()->addLog("screenX------"+QString::number(screenX), LogWidget::Warning);
+    //LogWidget::instance()->addLog("screenY------"+QString::number(screenY), LogWidget::Warning);
+    //LogWidget::instance()->addLog("value------"+QString::number(value), LogWidget::Warning);
 
-		// µÚÒ»×éÊÂ¼ş£ºÊó±êÒÆ¶¯ + ×ó¼üµã»÷
-		std::vector<INPUT> firstInputs;
-		firstInputs.push_back(moveInput);
-		firstInputs.push_back(leftDown);
-		firstInputs.push_back(leftUp);
-		SendInput(static_cast<UINT>(firstInputs.size()), firstInputs.data(), sizeof(INPUT));
+    // å®šä¹‰é¼ æ ‡ç§»åŠ¨äº‹ä»¶
+    INPUT moveInput = {};
+    moveInput.type = INPUT_MOUSE;
+    moveInput.mi.dx = screenX;
+    moveInput.mi.dy = screenY;
+    moveInput.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
 
-		// ÑÓÊ± 50 ºÁÃëºóÔÙ·¢ËÍÒ»´Îµã»÷
-		QTimer::singleShot(50, [=]() {
-			std::vector<INPUT> secondInputs;
-			secondInputs.push_back(moveInput);
-			secondInputs.push_back(leftDown);
-			secondInputs.push_back(leftUp);
-			SendInput(static_cast<UINT>(secondInputs.size()), secondInputs.data(), sizeof(INPUT));
-			});
-		return;
-	}
+    // å¦‚æœéœ€è¦åŒå‡»ï¼Œåˆ™é‡‡ç”¨ QTimer å»¶æ—¶å¤„ç†é¿å…é˜»å¡
+    if (mask & MouseDoubleClick)
+    {
+        // æ„é€ ä¸€æ¬¡å·¦é”®ç‚¹å‡»ï¼ˆæŒ‰ä¸‹å’Œé‡Šæ”¾ï¼‰
+        INPUT leftDown = {};
+        leftDown.type = INPUT_MOUSE;
+        leftDown.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+        INPUT leftUp = {};
+        leftUp.type = INPUT_MOUSE;
+        leftUp.mi.dwFlags = MOUSEEVENTF_LEFTUP;
 
-	// ¹¹ÔìÆäËüÊó±êÊÂ¼ş
-	std::vector<INPUT> inputs;
-	inputs.push_back(moveInput);  // Ê¼ÖÕ·¢ËÍÊó±êÒÆ¶¯ÊÂ¼ş
+        // ç¬¬ä¸€ç»„äº‹ä»¶ï¼šé¼ æ ‡ç§»åŠ¨ + å·¦é”®ç‚¹å‡»
+        std::vector<INPUT> firstInputs;
+        firstInputs.push_back(moveInput);
+        firstInputs.push_back(leftDown);
+        firstInputs.push_back(leftUp);
+        SendInput(static_cast<UINT>(firstInputs.size()), firstInputs.data(), sizeof(INPUT));
 
-	if (mask & MouseLeftDown) {
-		INPUT downInput = {};
-		downInput.type = INPUT_MOUSE;
-		downInput.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-		inputs.push_back(downInput);
-	}
-	if (mask & MouseLeftUp) {
-		INPUT upInput = {};
-		upInput.type = INPUT_MOUSE;
-		upInput.mi.dwFlags = MOUSEEVENTF_LEFTUP;
-		inputs.push_back(upInput);
-	}
-	if (mask & MouseRightClick) {
-		INPUT rightDown = {};
-		rightDown.type = INPUT_MOUSE;
-		rightDown.mi.dwFlags = MOUSEEVENTF_RIGHTDOWN;
-		INPUT rightUp = {};
-		rightUp.type = INPUT_MOUSE;
-		rightUp.mi.dwFlags = MOUSEEVENTF_RIGHTUP;
-		inputs.push_back(rightDown);
-		inputs.push_back(rightUp);
-	}
-	if (mask & MouseMiddleClick) {
-		INPUT middleDown = {};
-		middleDown.type = INPUT_MOUSE;
-		middleDown.mi.dwFlags = MOUSEEVENTF_MIDDLEDOWN;
-		INPUT middleUp = {};
-		middleUp.type = INPUT_MOUSE;
-		middleUp.mi.dwFlags = MOUSEEVENTF_MIDDLEUP;
-		inputs.push_back(middleDown);
-		inputs.push_back(middleUp);
-	}
+        // å»¶æ—¶ 50 æ¯«ç§’åå†å‘é€ä¸€æ¬¡ç‚¹å‡»
+        QTimer::singleShot(50, [=]() {
+            std::vector<INPUT> secondInputs;
+            secondInputs.push_back(moveInput);
+            secondInputs.push_back(leftDown);
+            secondInputs.push_back(leftUp);
+            SendInput(static_cast<UINT>(secondInputs.size()), secondInputs.data(), sizeof(INPUT));
+        });
+        return;
+    }
 
-	if (!inputs.empty()) {
-		SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT));
-	}
+    // æ„é€ å…¶å®ƒé¼ æ ‡äº‹ä»¶
+    std::vector<INPUT> inputs;
+    inputs.push_back(moveInput);  // å§‹ç»ˆå‘é€é¼ æ ‡ç§»åŠ¨äº‹ä»¶
+
+    if (mask & MouseLeftDown)
+    {
+        INPUT downInput = {};
+        downInput.type = INPUT_MOUSE;
+        downInput.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+        inputs.push_back(downInput);
+    }
+    if (mask & MouseLeftUp)
+    {
+        INPUT upInput = {};
+        upInput.type = INPUT_MOUSE;
+        upInput.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+        inputs.push_back(upInput);
+    }
+    if (mask & MouseRightClick)
+    {
+        INPUT rightDown = {};
+        rightDown.type = INPUT_MOUSE;
+        rightDown.mi.dwFlags = MOUSEEVENTF_RIGHTDOWN;
+        INPUT rightUp = {};
+        rightUp.type = INPUT_MOUSE;
+        rightUp.mi.dwFlags = MOUSEEVENTF_RIGHTUP;
+        inputs.push_back(rightDown);
+        inputs.push_back(rightUp);
+    }
+    if (mask & MouseMiddleClick)
+    {
+        INPUT middleDown = {};
+        middleDown.type = INPUT_MOUSE;
+        middleDown.mi.dwFlags = MOUSEEVENTF_MIDDLEDOWN;
+        INPUT middleUp = {};
+        middleUp.type = INPUT_MOUSE;
+        middleUp.mi.dwFlags = MOUSEEVENTF_MIDDLEUP;
+        inputs.push_back(middleDown);
+        inputs.push_back(middleUp);
+    }
+    if (mask & MouseWheel)
+    {
+        LogWidget::instance()->addLog("MouseWheel------"+QString::number(x)+QString::number(y), LogWidget::Warning);
+        INPUT wheel = {0};
+        wheel.type = INPUT_MOUSE;
+        wheel.mi.dx = screenX;
+        wheel.mi.dy = screenY;
+        wheel.mi.dwFlags = MOUSEEVENTF_WHEEL;
+        wheel.mi.mouseData = value;
+
+        inputs.push_back(wheel);
+    }
+
+    if (!inputs.empty())
+    {
+        SendInput(static_cast<UINT>(inputs.size()), inputs.data(), sizeof(INPUT));
+    }
 }
 
+void RemoteInputSimulator::handleTouchEvent(int timestamp, QList<DeskTouchPoint> points)
+{
+    LogWidget::instance()->addLog("handleTouchEvent------"+QString::number(points.size()), LogWidget::Debug);
 
+    //ChangeWindowMessageFilter(WM_TOUCH, MSGFLT_ADD);
+    // è·å–å½“å‰å‰å°çª—å£ï¼Œå¹¶å°è¯•æ¿€æ´»
+    HWND targetHwnd = GetForegroundWindow();
+    if (targetHwnd)
+    {
+        //bool ret = IsTouchWindow(targetHwnd, 0);
+        //LogWidget::instance()->addLog("IsTouchWindow"+QString::number(ret), LogWidget::Warning);
+
+        if (!SetForegroundWindow(targetHwnd))
+        {
+            LogWidget::instance()->addLog("Failed to set foreground window in handleTouchEvent", LogWidget::Warning);
+        }
+    }
+    else
+    {
+        LogWidget::instance()->addLog("No foreground window found in handleTouchEvent", LogWidget::Warning);
+    }
+
+
+    std::vector<POINTER_TOUCH_INFO> touches;
+    for (const auto &point : points)
+    {
+        POINTER_TOUCH_INFO touch = {{0}};
+        touch.pointerInfo.pointerType = PT_TOUCH;
+        touch.pointerInfo.pointerId = point.id - POINTER_TOUCH_ID_MAX;
+        //touch.pointerInfo.pointerId = 0;
+
+        int x = point.x;
+        int y = point.y;
+        x = x * 1.0 / 1920.0 * 2560.0;
+        y = y * 1.0 / 1080.0 * 1440.0;
+        int size = point.size;
+        touch.pointerInfo.ptPixelLocation.x = x;
+        touch.pointerInfo.ptPixelLocation.y = y;
+
+        // è®¾ç½®è§¦ç‚¹çŠ¶æ€
+        switch(point.phase)
+        {
+        case TOUCH_BEGIN:
+            touch.pointerInfo.pointerFlags = POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
+            break;
+        case TOUCH_MOVE:
+            touch.pointerInfo.pointerFlags = POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
+            break;
+        case TOUCH_END:
+        case TOUCH_CANCEL:
+            touch.pointerInfo.pointerFlags = POINTER_FLAG_UP;
+            break;
+        }
+
+        // è®¾ç½®è§¦ç‚¹åŒºåŸŸ
+        touch.touchMask = TOUCH_MASK_CONTACTAREA | TOUCH_MASK_PRESSURE;
+        //touch.touchMask = TOUCH_MASK_CONTACTAREA;
+        touch.rcContact.left   = x - size; // POINTER_TOUCH_SPACE
+        touch.rcContact.bottom = y + size;
+        touch.rcContact.top    = y - size;
+        touch.rcContact.right  = x + size;
+
+        touch.pressure = static_cast<uint32_t>(point.pressure * 1024);
+        //touch.orientation = 90;
+
+        touches.push_back(touch);
+    }
+
+    static int count = 0;
+    count += 1;
+
+    QString timeTemp = QDateTime::currentDateTime().toString("hh:mm:ss.zzz");
+    QString str = QString("TouchEvent:[%1] [size:%2] [count:%3]").arg(timeTemp).arg(points.size()).arg(count);
+    LogWidget::instance()->addLog(str, LogWidget::Debug);
+
+    if (!touches.empty())
+    {
+        InjectTouchInput(static_cast<UINT32>(touches.size()), touches.data());
+        if (touches.size() > 1)
+        {
+            //QThread::msleep(15);
+        }
+    }
+}
 
 WORD mapIntKeyToVK(int key)
 {
-	// ×ÖÄ¸£ºQt µÄ Key_A ~ Key_Z Óë ASCII 'A'-'Z' ¶ÔÓ¦
-	if (key >= Qt::Key_A && key <= Qt::Key_Z)
-		return static_cast<WORD>(key);
+    // å­—æ¯ï¼šQt çš„ Key_A ~ Key_Z ä¸ ASCII 'A'-'Z' å¯¹åº”
+    if (key >= Qt::Key_A && key <= Qt::Key_Z)
+        return static_cast<WORD>(key);
 
-	// Êı×Ö£ºQt µÄ Key_0 ~ Key_9 Óë ASCII '0'-'9' ¶ÔÓ¦
-	if (key >= Qt::Key_0 && key <= Qt::Key_9)
-		return static_cast<WORD>(key);
+    // æ•°å­—ï¼šQt çš„ Key_0 ~ Key_9 ä¸ ASCII '0'-'9' å¯¹åº”
+    if (key >= Qt::Key_0 && key <= Qt::Key_9)
+        return static_cast<WORD>(key);
 
-	// ¹¦ÄÜ¼ü£ºQt::Key_F1 ~ Qt::Key_F12
-	if (key >= Qt::Key_F1 && key <= Qt::Key_F12)
-		return VK_F1 + (key - Qt::Key_F1);
+    // åŠŸèƒ½é”®ï¼šQt::Key_F1 ~ Qt::Key_F12
+    if (key >= Qt::Key_F1 && key <= Qt::Key_F12)
+        return VK_F1 + (key - Qt::Key_F1);
 
-	// ¼ıÍ·¼ü
-	if (key == Qt::Key_Left)
-		return VK_LEFT;
-	if (key == Qt::Key_Up)
-		return VK_UP;
-	if (key == Qt::Key_Right)
-		return VK_RIGHT;
-	if (key == Qt::Key_Down)
-		return VK_DOWN;
+    // ç®­å¤´é”®
+    if (key == Qt::Key_Left)
+        return VK_LEFT;
+    if (key == Qt::Key_Up)
+        return VK_UP;
+    if (key == Qt::Key_Right)
+        return VK_RIGHT;
+    if (key == Qt::Key_Down)
+        return VK_DOWN;
 
-	// ³£ÓÃÌØÊâ¼ü
-	if (key == Qt::Key_Space)
-		return VK_SPACE;
-	if (key == Qt::Key_Return || key == Qt::Key_Enter)
-		return VK_RETURN;
-	if (key == Qt::Key_Escape)
-		return VK_ESCAPE;
-	if (key == Qt::Key_Backspace)
-		return VK_BACK;
-	if (key == Qt::Key_Tab)
-		return VK_TAB;
-	if (key == Qt::Key_Shift)
-		return VK_SHIFT;
-	if (key == Qt::Key_Control)
-		return VK_CONTROL;
-	if (key == Qt::Key_Alt)
-		return VK_MENU;
-	if (key == Qt::Key_CapsLock)
-		return VK_CAPITAL;
-	if (key == Qt::Key_Insert)
-		return VK_INSERT;
-	if (key == Qt::Key_Delete)
-		return VK_DELETE;
-	if (key == Qt::Key_Home)
-		return VK_HOME;
-	if (key == Qt::Key_End)
-		return VK_END;
-	if (key == Qt::Key_PageUp)
-		return VK_PRIOR; // Page Up
-	if (key == Qt::Key_PageDown)
-		return VK_NEXT;  // Page Down
+    // å¸¸ç”¨ç‰¹æ®Šé”®
+    if (key == Qt::Key_Space)
+        return VK_SPACE;
+    if (key == Qt::Key_Return || key == Qt::Key_Enter)
+        return VK_RETURN;
+    if (key == Qt::Key_Escape)
+        return VK_ESCAPE;
+    if (key == Qt::Key_Backspace)
+        return VK_BACK;
+    if (key == Qt::Key_Tab)
+        return VK_TAB;
+    if (key == Qt::Key_Shift)
+        return VK_SHIFT;
+    if (key == Qt::Key_Control)
+        return VK_CONTROL;
+    if (key == Qt::Key_Alt)
+        return VK_MENU;
+    if (key == Qt::Key_CapsLock)
+        return VK_CAPITAL;
+    if (key == Qt::Key_Insert)
+        return VK_INSERT;
+    if (key == Qt::Key_Delete)
+        return VK_DELETE;
+    if (key == Qt::Key_Home)
+        return VK_HOME;
+    if (key == Qt::Key_End)
+        return VK_END;
+    if (key == Qt::Key_PageUp)
+        return VK_PRIOR; // Page Up
+    if (key == Qt::Key_PageDown)
+        return VK_NEXT;  // Page Down
 
-	// ±êµã·ûºÅ¼° OEM ¼ü£¨¸ù¾İÃÀÊ½¼üÅÌ£©
-	if (key == Qt::Key_Comma)
-		return VK_OEM_COMMA;
-	if (key == Qt::Key_Period)
-		return VK_OEM_PERIOD;
-	if (key == Qt::Key_Slash)
-		return VK_OEM_2; // '/' ¼ü
-	if (key == Qt::Key_Semicolon)
-		return VK_OEM_1; // ';:' ¼ü
-	if (key == Qt::Key_Apostrophe)
-		return VK_OEM_7; // µ¥ÒıºÅ/Ë«ÒıºÅ¼ü
-	if (key == Qt::Key_BracketLeft)
-		return VK_OEM_4; // '[' ¼ü
-	if (key == Qt::Key_BracketRight)
-		return VK_OEM_6; // ']' ¼ü
-	if (key == Qt::Key_Backslash)
-		return VK_OEM_5; // '\' ¼ü
+    // æ ‡ç‚¹ç¬¦å·åŠ OEM é”®ï¼ˆæ ¹æ®ç¾å¼é”®ç›˜ï¼‰
+    if (key == Qt::Key_Comma)
+        return VK_OEM_COMMA;
+    if (key == Qt::Key_Period)
+        return VK_OEM_PERIOD;
+    if (key == Qt::Key_Slash)
+        return VK_OEM_2; // '/' é”®
+    if (key == Qt::Key_Semicolon)
+        return VK_OEM_1; // ';:' é”®
+    if (key == Qt::Key_Apostrophe)
+        return VK_OEM_7; // å•å¼•å·/åŒå¼•å·é”®
+    if (key == Qt::Key_BracketLeft)
+        return VK_OEM_4; // '[' é”®
+    if (key == Qt::Key_BracketRight)
+        return VK_OEM_6; // ']' é”®
+    if (key == Qt::Key_Backslash)
+        return VK_OEM_5; // '\' é”®
 
-	// Êı×Ö¼üÅÌ£¨Èç¹ûĞèÒªµ¥¶À´¦Àí£¬¿ÉÒÔ¼ì²é Qt::KeypadModifier »ò×¨ÓÃ¼üÖµ£©
-	// ´Ë´¦Ê¡ÂÔ´¦Àí£¬Í¨³£·¢ËÍµÄÊı×Ö¼üÎª±ê×¼¼üÅÌÊı×Ö
+    // æ•°å­—é”®ç›˜ï¼ˆå¦‚æœéœ€è¦å•ç‹¬å¤„ç†ï¼Œå¯ä»¥æ£€æŸ¥ Qt::KeypadModifier æˆ–ä¸“ç”¨é”®å€¼ï¼‰
+    // æ­¤å¤„çœç•¥å¤„ç†ï¼Œé€šå¸¸å‘é€çš„æ•°å­—é”®ä¸ºæ ‡å‡†é”®ç›˜æ•°å­—
 
-	// ÆäËûÎ´¸²¸ÇµÄ¼ü·µ»Ø 0 ±íÊ¾ÎŞ·¨Ó³Éä
-	return 0;
+    // å…¶ä»–æœªè¦†ç›–çš„é”®è¿”å› 0 è¡¨ç¤ºæ— æ³•æ˜ å°„
+    return 0;
 }
 
 void RemoteInputSimulator::handleKeyboardEvent(int protoKey, bool pressed)
 {
-	HWND targetHwnd = GetForegroundWindow();
-	if (targetHwnd) {
-		// ³¢ÊÔ¼¤»îÇ°Ì¨´°¿Ú
-		if (!SetForegroundWindow(targetHwnd)) {
-			LogWidget::instance()->addLog("Failed to set foreground window in handleMouseEvent", LogWidget::Warning);
-		}
-	}
-	else {
-		LogWidget::instance()->addLog("No foreground window found in handleMouseEvent", LogWidget::Warning);
-	}
+    HWND targetHwnd = GetForegroundWindow();
+    if (targetHwnd) {
+        // å°è¯•æ¿€æ´»å‰å°çª—å£
+        if (!SetForegroundWindow(targetHwnd)) {
+            LogWidget::instance()->addLog("Failed to set foreground window in handleMouseEvent", LogWidget::Warning);
+        }
+    }
+    else {
+        LogWidget::instance()->addLog("No foreground window found in handleMouseEvent", LogWidget::Warning);
+    }
 
-	// ½« protoKey ×ª»»Îª proto Ã¶¾ÙÀàĞÍ£¨ControlKey£©
-	WORD vk = mapIntKeyToVK(protoKey);
-	if (vk == 0) {
-		LogWidget::instance()->addLog("Unmapped key received in RemoteInputSimulator", LogWidget::Warning);
-		return;
-	}
+    // å°† protoKey è½¬æ¢ä¸º proto æšä¸¾ç±»å‹ï¼ˆControlKeyï¼‰
+    WORD vk = mapIntKeyToVK(protoKey);
+    if (vk == 0) {
+        LogWidget::instance()->addLog("Unmapped key received in RemoteInputSimulator", LogWidget::Warning);
+        return;
+    }
 
-	INPUT input = { 0 };
-	input.type = INPUT_KEYBOARD;
-	input.ki.wVk = vk;
-	input.ki.dwFlags = pressed ? 0 : KEYEVENTF_KEYUP;
+    INPUT input = { 0 };
+    input.type = INPUT_KEYBOARD;
+    input.ki.wVk = vk;
+    input.ki.dwFlags = pressed ? 0 : KEYEVENTF_KEYUP;
 
-	UINT sent = SendInput(1, &input, sizeof(INPUT));
-	if (sent != 1) {
-		LogWidget::instance()->addLog("SendInput failed in handleKeyboardEvent", LogWidget::Warning);
-	}
+    UINT sent = SendInput(1, &input, sizeof(INPUT));
+    if (sent != 1) {
+        LogWidget::instance()->addLog("SendInput failed in handleKeyboardEvent", LogWidget::Warning);
+    }
 }
-

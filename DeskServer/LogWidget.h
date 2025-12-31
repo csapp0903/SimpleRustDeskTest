@@ -14,56 +14,59 @@
 
 class LogWidget : public QWidget
 {
-	Q_OBJECT
+    Q_OBJECT
 public:
-	// ÈÕÖ¾¼¶±ğÃ¶¾Ù
-	enum LogLevel {
-		Info,
-		Warning,
-		Error
-	};
+    // æ—¥å¿—çº§åˆ«æšä¸¾
+    enum LogLevel {
+        Debug,
+        Info,
+        Warning,
+        Error
+    };
 
-	// µ¥Àı·ÃÎÊ·½·¨
-	static LogWidget* instance()
-	{
-		static QMutex mutex;
-		QMutexLocker locker(&mutex);
-		if (!m_instance) {
-			m_instance = new LogWidget();
-		}
-		return m_instance;
-	}
+    // å•ä¾‹è®¿é—®æ–¹æ³•
+    static LogWidget* instance()
+    {
+        static QMutex mutex;
+        QMutexLocker locker(&mutex);
+        if (!m_instance)
+        {
+            m_instance = new LogWidget();
+        }
+        return m_instance;
+    }
 
-	// ³õÊ¼»¯º¯Êı£¬ÉèÖÃ¸¸´°¿Ú
-	void init(QWidget* parent);
+    // åˆå§‹åŒ–å‡½æ•°ï¼Œè®¾ç½®çˆ¶çª—å£
+    void init(QWidget* parent);
 
-	// Ìí¼ÓÈÕÖ¾£¬½¨Òé±ê¼ÇÎª Q_INVOKABLE ÒÔÖ§³Ö¿çÏß³Ìµ÷ÓÃ
-	Q_INVOKABLE void addLog(const QString& logMessage, LogLevel level = Info);
+    // æ·»åŠ æ—¥å¿—ï¼Œå»ºè®®æ ‡è®°ä¸º Q_INVOKABLE ä»¥æ”¯æŒè·¨çº¿ç¨‹è°ƒç”¨
+    Q_INVOKABLE void addLog(const QString& logMessage, LogLevel level = Info);
 
-	// ½ûÓÃ¿½±´¹¹ÔìºÍ¸³Öµ
-	LogWidget(const LogWidget&) = delete;
-	LogWidget& operator=(const LogWidget&) = delete;
+    // ç¦ç”¨æ‹·è´æ„é€ å’Œèµ‹å€¼
+    LogWidget(const LogWidget&) = delete;
+    LogWidget& operator=(const LogWidget&) = delete;
 
 private:
-	// Ë½ÓĞ¹¹Ôìº¯Êı
-	explicit LogWidget();
-	// Îö¹¹Ê±¹Ø±ÕÈÕÖ¾ÎÄ¼ş
-	~LogWidget() {
-		if (m_logFile) {
-			m_logFile->close();
-		}
-	}
+    // ç§æœ‰æ„é€ å‡½æ•°
+    explicit LogWidget();
+    // ææ„æ—¶å…³é—­æ—¥å¿—æ–‡ä»¶
+    ~LogWidget() {
+        if (m_logFile)
+        {
+            m_logFile->close();
+        }
+    }
 
-	// Êµ¼Ê¸üĞÂÈÕÖ¾µÄÄÚ²¿º¯Êı
-	void appendLog(const QString& logMessage, LogLevel level, const QString& callerThreadId);
+    // å®é™…æ›´æ–°æ—¥å¿—çš„å†…éƒ¨å‡½æ•°
+    void appendLog(const QString& logMessage, LogLevel level, const QString& callerThreadId);
 
-	// µ¥ÀıÊµÀı
-	static LogWidget* m_instance;
+    // å•ä¾‹å®ä¾‹
+    static LogWidget* m_instance;
 
-	// UI×é¼ş
-	QTextEdit* logEdit;
-	// ÈÕÖ¾ÎÄ¼ş¶ÔÏó
-	QFile* m_logFile;
+    // UIç»„ä»¶
+    QTextEdit* logEdit;
+    // æ—¥å¿—æ–‡ä»¶å¯¹è±¡
+    QFile* m_logFile;
 };
 
 #endif // LOGWIDGET_H

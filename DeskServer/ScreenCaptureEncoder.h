@@ -17,33 +17,50 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-class ScreenCaptureEncoder : public QObject {
-	Q_OBJECT
+class ScreenCaptureEncoder : public QObject
+{
+    Q_OBJECT
 public:
-	explicit ScreenCaptureEncoder(QObject* parent = nullptr);
-	~ScreenCaptureEncoder();
+    explicit ScreenCaptureEncoder(QObject* parent = nullptr);
+    ~ScreenCaptureEncoder();
 
-	void startCapture();
-	// 停止捕获
-	void stopCapture();
+    void startCapture();
+    // 鍋滄鎹曡幏
+    void stopCapture();
 
 signals:
-	// 当编码出数据包后发出信号，由外部处理发送逻辑
-	void encodedPacketReady(const QByteArray& packet);
+    // 褰撶紪鐮佸嚭鏁版嵁鍖呭悗鍙戝嚭淇″彿锛岀敱澶栭儴澶勭悊鍙戦�侀�昏緫
+    void encodedPacketReady(const QByteArray& packet);
 
 private slots:
-	void captureAndEncode();
+    void captureAndEncode();
 
 private:
-	void reinitializeEncoder(int newWidth, int newHeight);
+    void reinitializeEncoder(int newWidth, int newHeight);
+
+    QImage grabDXG();
+    void initDXGIManager();
+    void unitDXGIManager();
+
+    QSize getFixedSize();
+
+    // DXG灞忓箷鎹曡幏
+    bool m_bInitDXGI = false;
+    unsigned char* m_pBuff = Q_NULLPTR;
+    int m_iBuffSize = 0;
+    int m_iDeskWidth;
+    int m_iDeskHeight;
+    QImage m_image;
+    int m_iFrame = 0;
+
 private:
-	// FFmpeg相关成员
-	const AVCodec* codec;
-	AVCodecContext* codecCtx;
-	AVFrame* frame;
-	struct SwsContext* swsCtx;
-	int frameCounter;
-	QTimer* timer;
+    // FFmpeg鐩稿叧鎴愬憳
+    const AVCodec* codec;
+    AVCodecContext* codecCtx;
+    AVFrame* frame;
+    struct SwsContext* swsCtx;
+    int frameCounter;
+    QTimer* timer;
 };
 
 #endif // SCREENCAPTUREENCODER_H

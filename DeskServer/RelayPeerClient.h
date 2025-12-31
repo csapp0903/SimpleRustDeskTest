@@ -6,33 +6,35 @@
 #include <QTimer>
 #include "rendezvous.pb.h"
 
-class RelayPeerClient : public QObject {
-	Q_OBJECT
-public:
-	explicit RelayPeerClient(QObject* parent = nullptr);
-	~RelayPeerClient();
+class RelayPeerClient : public QObject
+{
+    Q_OBJECT
 
-	// Æô¶¯ RelayPeerClient£¬´«Èë Relay µÄ IP ºÍ Port
-	void start(const QHostAddress& relayAddress, quint16 relayPort);
-	// Í£Ö¹
-	void stop();
+public:
+    explicit RelayPeerClient(QObject* parent = nullptr);
+    ~RelayPeerClient();
+
+    // å¯åŠ¨ RelayPeerClientï¼Œä¼ å…¥ Relay çš„ IP å’Œ Port
+    void start(const QHostAddress& relayAddress, quint16 relayPort);
+    // åœæ­¢
+    void stop();
 
 signals:
-	// ÊÕµ½ Heartbeat »Ø¸´Ê±·¢³öĞÅºÅ
-	void heartbeatResponseReceived();
-	// ³ö´íĞÅºÅ
-	void errorOccurred(const QString& errorString);
+    // æ”¶åˆ° Heartbeat å›å¤æ—¶å‘å‡ºä¿¡å·
+    void heartbeatResponseReceived();
+    // å‡ºé”™ä¿¡å·
+    void errorOccurred(const QString& errorString);
 
 private slots:
-	// ¶¨Ê±·¢ËÍ Heartbeat ÏûÏ¢
-	void sendHeartbeat();
-	// ´¦ÀíÊÕµ½µÄÊı¾İ
-	void onReadyRead();
+    // å®šæ—¶å‘é€ Heartbeat æ¶ˆæ¯
+    void sendHeartbeat();
+    // å¤„ç†æ”¶åˆ°çš„æ•°æ®
+    void onReadyRead();
 
 private:
-	QUdpSocket* m_udpSocket;
-	QHostAddress m_relayAddress;
-	quint16 m_relayPort;
-	QTimer* m_heartbeatTimer;
-	bool m_isAlive;
+    QUdpSocket* m_udpSocket;
+    QHostAddress m_relayAddress;
+    quint16 m_relayPort;
+    QTimer* m_heartbeatTimer;
+    bool m_isAlive;
 };

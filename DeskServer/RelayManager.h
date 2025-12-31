@@ -9,14 +9,16 @@
 #include "RelaySocketWorker.h"
 #include "RemoteClipboard.h"
 
-class RelayManager : public QObject {
+class RelayManager : public QObject
+{
 	Q_OBJECT
+
 public:
 	explicit RelayManager(QObject* parent = nullptr);
 	~RelayManager();
 
 	void start(const QHostAddress& relayAddress, quint16 relayPort, const QString& uuid);
-	// Í£Ö¹ TCP Á¬½Ó¼°²¶»ñ/±àÂë¡£
+	// åœæ­¢ TCP è¿æ¥åŠæ•è·/ç¼–ç ã€‚
 	void stop();
 
 signals:
@@ -31,7 +33,6 @@ private slots:
 	void onWorkerSocketError(const QString& errMsg);
 	void onEncodedPacketReady(const QByteArray& packet);
 	void sendClipboardEvent(const ClipboardEvent& clipboardEvent);
-
 
 private:
 	void processReceivedData(const QByteArray& packetData);

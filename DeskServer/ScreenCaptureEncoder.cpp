@@ -1,250 +1,376 @@
 #include "ScreenCaptureEncoder.h"
 #include "LogWidget.h"
 
+#include <QElapsedTimer>
+#include <QDebug>
+#include <QBuffer>
+#include <QImageWriter>
+
+#define FIXED_W 1920
+#define FIXED_H 1080
+#define FRAME_FPS 20
+
+#include "DXGIManager.h"
+DXGIManager* m_pDXGIManager = Q_NULLPTR;
+
 ScreenCaptureEncoder::ScreenCaptureEncoder(QObject* parent)
-	: QObject(parent), codec(nullptr), codecCtx(nullptr), frame(nullptr),
-	swsCtx(nullptr), frameCounter(0)
+    : QObject(parent), codec(nullptr), codecCtx(nullptr), frame(nullptr),
+    swsCtx(nullptr), frameCounter(0)
 {
-	QScreen* screen = QGuiApplication::primaryScreen();
-	if (!screen) {
-		LogWidget::instance()->addLog("No primary screen found!", LogWidget::Error);
-	}
-	QSize screenSize = screen->size();
+    QSize screenSize = getFixedSize();
+    if (screenSize.isEmpty())
+    {
+        LogWidget::instance()->addLog("No primary screen found!", LogWidget::Error);
+    }
 
-	// ≤È’“ H264 ±‡¬Î∆˜
-	codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-	if (!codec) {
-		LogWidget::instance()->addLog("H264 codec not found", LogWidget::Error);
+    // Êü•Êâæ H264 ÁºñÁ†ÅÂô®
+    codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+    if (!codec)
+    {
+        LogWidget::instance()->addLog("H264 codec not found", LogWidget::Error);
+    }
 
-	}
+    // ÂàÜÈÖçÁºñÁ†Å‰∏ä‰∏ãÊñá
+    codecCtx = avcodec_alloc_context3(codec);
+    if (!codecCtx)
+    {
+        LogWidget::instance()->addLog("Could not allocate video codec context", LogWidget::Error);
+    }
 
-	// ∑÷≈‰±‡¬Î…œœ¬Œƒ
-	codecCtx = avcodec_alloc_context3(codec);
-	if (!codecCtx) {
-		LogWidget::instance()->addLog("Could not allocate video codec context", LogWidget::Error);
+    // MOD: Èôç‰ΩéÊØîÁâπÁéáÔºå‰ªéÂéüÊù•ÁöÑ width*height*4 Ë∞ÉÊï¥‰∏∫ width*height*2
+    codecCtx->bit_rate = screenSize.width() * screenSize.height() * 2;
+    codecCtx->width = screenSize.width();
+    codecCtx->height = screenSize.height();
+    // MOD: Èôç‰ΩéÂ∏ßÁéáÂà∞20fpsÔºàÂéüÊù•30fpsÔºâ
+    codecCtx->time_base = AVRational{ 1, FRAME_FPS };
+    codecCtx->framerate = AVRational{ FRAME_FPS, 1 };
+    codecCtx->gop_size = 10;
+    codecCtx->max_b_frames = 1;
+    codecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
 
-	}
+    // ËÆæÁΩÆ‰ΩéÂª∂ËøüÈ¢ÑËÆæÂíåÈõ∂Âª∂ËøüË∞É‰ºò
+    av_opt_set(codecCtx->priv_data, "preset", "ultrafast", 0);
+    // MOD: Â¢ûÂä†Èõ∂Âª∂ËøüË∞É‰ºòÈÄâÈ°π
+    av_opt_set(codecCtx->priv_data, "tune", "zerolatency", 0);
 
-	// MOD: ΩµµÕ±»Ãÿ¬ £¨¥”‘≠¿¥µƒ width*height*4 µ˜’˚Œ™ width*height*2
-	codecCtx->bit_rate = screenSize.width() * screenSize.height() * 2;
-	codecCtx->width = screenSize.width();
-	codecCtx->height = screenSize.height();
-	// MOD: ΩµµÕ÷°¬ µΩ20fps£®‘≠¿¥30fps£©
-	codecCtx->time_base = AVRational{ 1, 20 };
-	codecCtx->framerate = AVRational{ 20, 1 };
-	codecCtx->gop_size = 10;
-	codecCtx->max_b_frames = 1;
-	codecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
+    // ÊâìÂºÄÁºñÁ†ÅÂô®
+    if (avcodec_open2(codecCtx, codec, nullptr) < 0)
+    {
+        LogWidget::instance()->addLog("Could not open codec", LogWidget::Error);
+    }
 
-	// …Ë÷√µÕ—”≥Ÿ‘§…Ë∫Õ¡„—”≥Ÿµ˜”≈
-	av_opt_set(codecCtx->priv_data, "preset", "ultrafast", 0);
-	// MOD: ‘ˆº”¡„—”≥Ÿµ˜”≈—°œÓ
-	av_opt_set(codecCtx->priv_data, "tune", "zerolatency", 0);
+    // ÂàÜÈÖçËßÜÈ¢ëÂ∏ß
+    frame = av_frame_alloc();
+    if (!frame)
+    {
+        LogWidget::instance()->addLog("Could not allocate video frame", LogWidget::Error);
+    }
+    frame->format = codecCtx->pix_fmt;
+    frame->width = codecCtx->width;
+    frame->height = codecCtx->height;
 
-	// ¥Úø™±‡¬Î∆˜
-	if (avcodec_open2(codecCtx, codec, nullptr) < 0) {
-		LogWidget::instance()->addLog("Could not open codec", LogWidget::Error);
-	}
+    // ÂàÜÈÖçÂ∏ßÁºìÂÜ≤Âå∫
+    int ret = av_image_alloc(frame->data, frame->linesize, codecCtx->width, codecCtx->height,
+                             codecCtx->pix_fmt, 32);
+    if (ret < 0)
+    {
+        LogWidget::instance()->addLog("Could not allocate raw picture buffer", LogWidget::Error);
+    }
 
-	// ∑÷≈‰ ”∆µ÷°
-	frame = av_frame_alloc();
-	if (!frame) {
-		LogWidget::instance()->addLog("Could not allocate video frame", LogWidget::Error);
-	}
-	frame->format = codecCtx->pix_fmt;
-	frame->width = codecCtx->width;
-	frame->height = codecCtx->height;
+    // ÂàùÂßãÂåñËΩ¨Êç¢‰∏ä‰∏ãÊñáÔºå‰ªé QImage ÁöÑ BGRA ËΩ¨Êç¢‰∏∫ YUV420P
+    swsCtx = sws_getContext(codecCtx->width, codecCtx->height, AV_PIX_FMT_BGRA,
+                            codecCtx->width, codecCtx->height, codecCtx->pix_fmt,
+                            SWS_BILINEAR, nullptr, nullptr, nullptr);
+    if (!swsCtx)
+    {
+        LogWidget::instance()->addLog("Could not initialize the conversion context", LogWidget::Error);
+    }
 
-	// ∑÷≈‰÷°ª∫≥Â«¯
-	int ret = av_image_alloc(frame->data, frame->linesize, codecCtx->width, codecCtx->height,
-		codecCtx->pix_fmt, 32);
-	if (ret < 0) {
-		LogWidget::instance()->addLog("Could not allocate raw picture buffer", LogWidget::Error);
+    initDXGIManager();
 
-	}
-
-	// ≥ı ºªØ◊™ªª…œœ¬Œƒ£¨¥” QImage µƒ BGRA ◊™ªªŒ™ YUV420P
-	swsCtx = sws_getContext(codecCtx->width, codecCtx->height, AV_PIX_FMT_BGRA,
-		codecCtx->width, codecCtx->height, codecCtx->pix_fmt,
-		SWS_BILINEAR, nullptr, nullptr, nullptr);
-	if (!swsCtx) {
-		LogWidget::instance()->addLog("Could not initialize the conversion context", LogWidget::Error);
-	}
-
-	// MOD: µ˜’˚∂® ±∆˜º‰∏Ù£¨∆•≈‰20fps£®50ms√ø÷°£©
-	timer = new QTimer(this);
-	connect(timer, &QTimer::timeout, this, &ScreenCaptureEncoder::captureAndEncode);
+    // MOD: Ë∞ÉÊï¥ÂÆöÊó∂Âô®Èó¥ÈöîÔºåÂåπÈÖç20fpsÔºà50msÊØèÂ∏ßÔºâ
+    timer = new QTimer(this);
+    connect(timer, &QTimer::timeout, this, &ScreenCaptureEncoder::captureAndEncode);
 }
 
 ScreenCaptureEncoder::~ScreenCaptureEncoder()
 {
-	if (timer) timer->stop();
-	if (swsCtx)
-		sws_freeContext(swsCtx);
-	if (frame) {
-		av_freep(&frame->data[0]);
-		av_frame_free(&frame);
-	}
-	if (codecCtx) {
-		avcodec_free_context(&codecCtx);
-	}
+    if (timer)
+    {
+        timer->stop();
+    }
+    if (swsCtx)
+    {
+        sws_freeContext(swsCtx);
+    }
+    if (frame)
+    {
+        av_freep(&frame->data[0]);
+        av_frame_free(&frame);
+    }
+    if (codecCtx)
+    {
+        avcodec_free_context(&codecCtx);
+    }
+
+    unitDXGIManager();
 }
 
 void ScreenCaptureEncoder::startCapture()
 {
-	// MOD:  π”√50msº‰∏Ù“‘ µœ÷20fps
-	timer->start(50);
+    // MOD: ‰ΩøÁî®ÂÆöÊó∂Âô®Ëß¶ÂèëÈó¥Èöî‰ª•ÂÆûÁé∞Â∏ßÁéá FRAME_FPS
+    timer->start(1000 / FRAME_FPS);
 }
 
-
-// µ±ºÏ≤‚µΩ∆¡ƒª∑÷±Ê¬ ±‰ªØ ±£¨÷ÿ–¬≥ı ºªØ±‡¬Î∆˜
+// ÂΩìÊ£ÄÊµãÂà∞Â±èÂπïÂàÜËæ®ÁéáÂèòÂåñÊó∂ÔºåÈáçÊñ∞ÂàùÂßãÂåñÁºñÁ†ÅÂô®
 void ScreenCaptureEncoder::reinitializeEncoder(int newWidth, int newHeight)
 {
-	// Õ£÷π∂® ±∆˜£¨∑¿÷π≤¢∑¢∑√Œ 
-	timer->stop();
+    // ÂÅúÊ≠¢ÂÆöÊó∂Âô®ÔºåÈò≤Ê≠¢Âπ∂ÂèëËÆøÈóÆ
+    timer->stop();
 
-	//  Õ∑≈÷Æ«∞µƒ◊ ‘¥
-	if (swsCtx) {
-		sws_freeContext(swsCtx);
-		swsCtx = nullptr;
-	}
-	if (frame) {
-		av_freep(&frame->data[0]);
-		av_frame_free(&frame);
-		frame = nullptr;
-	}
-	if (codecCtx) {
-		avcodec_free_context(&codecCtx);
-		codecCtx = nullptr;
-	}
+    // ÈáäÊîæ‰πãÂâçÁöÑËµÑÊ∫ê
+    if (swsCtx)
+    {
+        sws_freeContext(swsCtx);
+        swsCtx = nullptr;
+    }
+    if (frame)
+    {
+        av_freep(&frame->data[0]);
+        av_frame_free(&frame);
+        frame = nullptr;
+    }
+    if (codecCtx)
+    {
+        avcodec_free_context(&codecCtx);
+        codecCtx = nullptr;
+    }
 
-	// ÷ÿ–¬∑÷≈‰±‡¬Î…œœ¬Œƒ
-	codecCtx = avcodec_alloc_context3(codec);
-	if (!codecCtx) {
-		LogWidget::instance()->addLog("Could not allocate video codec context", LogWidget::Error);
-	}
+    // ÈáçÊñ∞ÂàÜÈÖçÁºñÁ†Å‰∏ä‰∏ãÊñá
+    codecCtx = avcodec_alloc_context3(codec);
+    if (!codecCtx)
+    {
+        LogWidget::instance()->addLog("Could not allocate video codec context", LogWidget::Error);
+    }
 
-	// MOD:  π”√–¬µƒ∑÷±Ê¬ ∫Õµ˜”≈≤Œ ˝£®±£≥÷‘≠∑÷±Ê¬ ≤ª±‰£©
-	QSize newSize(newWidth, newHeight);
-	codecCtx->bit_rate = newSize.width() * newSize.height() * 2; // MOD: bit_rateµ˜’˚
-	codecCtx->width = newSize.width();
-	codecCtx->height = newSize.height();
-	codecCtx->time_base = AVRational{ 1, 20 }; // MOD: 20fps
-	codecCtx->framerate = AVRational{ 20, 1 };
-	codecCtx->gop_size = 10;
-	codecCtx->max_b_frames = 1;
-	codecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
+    // MOD: ‰ΩøÁî®Êñ∞ÁöÑÂàÜËæ®ÁéáÂíåË∞É‰ºòÂèÇÊï∞Ôºà‰øùÊåÅÂéüÂàÜËæ®Áéá‰∏çÂèòÔºâ
+    QSize newSize(newWidth, newHeight);
+    codecCtx->bit_rate = newSize.width() * newSize.height() * 2; // MOD: bit_rateË∞ÉÊï¥
+    codecCtx->width = newSize.width();
+    codecCtx->height = newSize.height();
+    codecCtx->time_base = AVRational{ 1, FRAME_FPS }; // MOD: 20fps
+    codecCtx->framerate = AVRational{ FRAME_FPS, 1 };
+    codecCtx->gop_size = 10;
+    codecCtx->max_b_frames = 1;
+    codecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
 
-	av_opt_set(codecCtx->priv_data, "preset", "ultrafast", 0);
-	av_opt_set(codecCtx->priv_data, "tune", "zerolatency", 0);
+    av_opt_set(codecCtx->priv_data, "preset", "ultrafast", 0);
+    av_opt_set(codecCtx->priv_data, "tune", "zerolatency", 0);
 
-	if (avcodec_open2(codecCtx, codec, nullptr) < 0) {
-		LogWidget::instance()->addLog("Could not open codec", LogWidget::Error);
+    if (avcodec_open2(codecCtx, codec, nullptr) < 0) {
+        LogWidget::instance()->addLog("Could not open codec", LogWidget::Error);
+    }
 
-	}
+    // ÂàÜÈÖçÊñ∞ÁöÑËßÜÈ¢ëÂ∏ß
+    frame = av_frame_alloc();
+    if (!frame)
+    {
+        LogWidget::instance()->addLog("Could not allocate video frame", LogWidget::Error);
+    }
+    frame->format = codecCtx->pix_fmt;
+    frame->width = codecCtx->width;
+    frame->height = codecCtx->height;
 
-	// ∑÷≈‰–¬µƒ ”∆µ÷°
-	frame = av_frame_alloc();
-	if (!frame) {
-		LogWidget::instance()->addLog("Could not allocate video frame", LogWidget::Error);
-	}
-	frame->format = codecCtx->pix_fmt;
-	frame->width = codecCtx->width;
-	frame->height = codecCtx->height;
+    int ret = av_image_alloc(frame->data, frame->linesize, codecCtx->width, codecCtx->height,
+                             codecCtx->pix_fmt, 32);
+    if (ret < 0)
+    {
+        LogWidget::instance()->addLog("Could not allocate raw picture buffer", LogWidget::Error);
+    }
 
-	int ret = av_image_alloc(frame->data, frame->linesize, codecCtx->width, codecCtx->height,
-		codecCtx->pix_fmt, 32);
-	if (ret < 0) {
-		LogWidget::instance()->addLog("Could not allocate raw picture buffer", LogWidget::Error);
+    // ÈáçÊñ∞ÂàùÂßãÂåñËΩ¨Êç¢‰∏ä‰∏ãÊñá
+    swsCtx = sws_getContext(codecCtx->width, codecCtx->height, AV_PIX_FMT_BGRA,
+                            codecCtx->width, codecCtx->height, codecCtx->pix_fmt,
+                            SWS_BILINEAR, nullptr, nullptr, nullptr);
+    if (!swsCtx)
+    {
+        LogWidget::instance()->addLog("Could not initialize the conversion context", LogWidget::Error);
+    }
 
-	}
+    qDebug() << "Encoder reinitialized with resolution:" << codecCtx->width << "x" << codecCtx->height;
 
-	// ÷ÿ–¬≥ı ºªØ◊™ªª…œœ¬Œƒ
-	swsCtx = sws_getContext(codecCtx->width, codecCtx->height, AV_PIX_FMT_BGRA,
-		codecCtx->width, codecCtx->height, codecCtx->pix_fmt,
-		SWS_BILINEAR, nullptr, nullptr, nullptr);
-	if (!swsCtx) {
-		LogWidget::instance()->addLog("Could not initialize the conversion context", LogWidget::Error);
-
-	}
-
-	qDebug() << "Encoder reinitialized with resolution:" << codecCtx->width << "x" << codecCtx->height;
-
-	// MOD: ÷ÿ∆Ù∂® ±∆˜£¨ π”√50msº‰∏Ù
-	timer->start(50);
+    // MOD: ÈáçÂêØÂÆöÊó∂Âô®Ôºå‰ΩøÁî®50msÈó¥Èöî
+    timer->start(1000 / FRAME_FPS);
 }
 
+QImage ScreenCaptureEncoder::grabDXG()
+{
+    if (!m_pDXGIManager)
+    {
+        qDebug() << "Error no DXGIManager";
+        return QImage();
+    }
+
+    QImage bufferImage;
+    HRESULT hr = m_pDXGIManager->CaptureScreen(bufferImage);
+    m_iFrame += 1;
+
+    if (SUCCEEDED(hr))
+    {
+        m_image = bufferImage;
+    }
+
+    return m_image;
+}
+
+void ScreenCaptureEncoder::initDXGIManager()
+{
+    if (!m_pDXGIManager)
+    {
+        m_pDXGIManager = new DXGIManager;
+        m_pDXGIManager->SetCaptureSource(CSMonitor1);//!< Â±èÂπï1 ‰∏ªÂ±è
+        //!< Ëé∑Âèñ‰∏ªÂ±èÂ§ßÂ∞èÔºåÂπ∂ÂÖàÂàùÂßãÂåñ‰∏Ä‰∏™ÂõæÁâáÂÜÖÂ≠ò
+        RECT rcDest;
+        m_pDXGIManager->GetOutputRect(rcDest);
+        m_iDeskHeight = rcDest.bottom - rcDest.top; //!< ‰∏ªÂ±èÈ´òÂ∫¶
+        m_iDeskWidth = rcDest.right - rcDest.left;	//!< ‰∏ªÂ±èÂÆΩÂ∫¶
+        m_iBuffSize = m_iDeskWidth * m_iDeskHeight * 4;	//!< ÂõæÁâáÁºìÂÜ≤Â§ßÂ∞è
+
+        m_image = QImage(m_iDeskWidth, m_iDeskHeight, QImage::Format_RGB32);//!< ÂõæÁâáÂ§ßÂ∞è
+    }
+}
+
+void ScreenCaptureEncoder::unitDXGIManager()
+{
+    if (m_pDXGIManager)
+    {
+        delete m_pDXGIManager;
+        m_pDXGIManager = Q_NULLPTR;
+    }
+}
+
+QSize ScreenCaptureEncoder::getFixedSize()
+{
+    QSize size = QSize(0, 0);
+
+    // Ê£ÄÊµãÂΩìÂâçÂ±èÂπïÂ∞∫ÂØ∏
+    QScreen* screen = QGuiApplication::primaryScreen();
+    if (!screen)
+    {
+        LogWidget::instance()->addLog("No primary screen found!", LogWidget::Error);
+        return size;
+    }
+    QSize screenSize = screen->size();
+    if (screenSize.width() > screenSize.height())
+    {
+        size = QSize(FIXED_W, FIXED_H);
+    }
+    else
+    {
+        size = QSize(FIXED_H, FIXED_W);
+    }
+
+    return size;
+}
 
 void ScreenCaptureEncoder::stopCapture()
 {
-	if (timer) {
-		timer->stop();
-	}
+    if (timer)
+    {
+        timer->stop();
+    }
 }
 
 void ScreenCaptureEncoder::captureAndEncode()
 {
-	QScreen* screen = QGuiApplication::primaryScreen();
-	if (!screen) {
-		LogWidget::instance()->addLog("No primary screen foundt", LogWidget::Error);
-		return;
-	}
+    QSize currentScreenSize = getFixedSize();
+    if (currentScreenSize.isEmpty())
+    {
+        LogWidget::instance()->addLog("No primary screen foundt", LogWidget::Error);
+        return;
+    }
+    if (currentScreenSize.width() != codecCtx->width || currentScreenSize.height() != codecCtx->height)
+    {
+        LogWidget::instance()->addLog(
+            QString("Screen resolution changed from %1x%2 to %3x%4")
+                .arg(codecCtx->width)
+                .arg(codecCtx->height)
+                .arg(currentScreenSize.width())
+                .arg(currentScreenSize.height()),
+            LogWidget::Info);
+        // ÂàÜËæ®ÁéáÂèòÂåñÊó∂ÈáçÊñ∞ÂàùÂßãÂåñÁºñÁ†ÅÂô®
+        reinitializeEncoder(currentScreenSize.width(), currentScreenSize.height());
+        return; // Êú¨Ê¨°‰∏çËøõË°åÁºñÁ†Å,‰∏ã‰∏™Âë®Êúü‰ºö‰ΩøÁî®Êñ∞ÂèÇÊï∞ÊçïËé∑
+    }
 
-	// ºÏ≤‚µ±«∞∆¡ƒª≥ﬂ¥Á
-	QSize currentScreenSize = screen->size();
-	if (currentScreenSize.width() != codecCtx->width || currentScreenSize.height() != codecCtx->height) {
-		LogWidget::instance()->addLog(
-			QString("Screen resolution changed from %1x%2 to %3x%4")
-			.arg(codecCtx->width)
-			.arg(codecCtx->height)
-			.arg(currentScreenSize.width())
-			.arg(currentScreenSize.height()),
-			LogWidget::Info);
-		// ∑÷±Ê¬ ±‰ªØ ±÷ÿ–¬≥ı ºªØ±‡¬Î∆˜
-		reinitializeEncoder(currentScreenSize.width(), currentScreenSize.height());
-		return; // ±æ¥Œ≤ªΩ¯––±‡¬Î£¨œ¬∏ˆ÷‹∆⁄ª· π”√–¬≤Œ ˝≤∂ªÒ
-	}
+    // ÊçïËé∑Êï¥‰∏™Â±èÂπï
+    //QPixmap pixmap = screen->grabWindow(0);
+    //QImage image = pixmap.toImage().convertToFormat(QImage::Format_ARGB32);
 
-	// ≤∂ªÒ’˚∏ˆ∆¡ƒª
-	QPixmap pixmap = screen->grabWindow(0);
-	QImage image = pixmap.toImage().convertToFormat(QImage::Format_ARGB32);
+    QImage dxgImg = grabDXG();
+    // MOD: Áõ¥Êé•‰ΩøÁî®ÂéüÂßãÂàÜËæ®Áéá,‰∏çÊîπÂèòÂ∞∫ÂØ∏
+    QImage scaledImage = dxgImg.scaled(codecCtx->width, codecCtx->height, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    QImage image = scaledImage.convertToFormat(QImage::Format_ARGB32);
 
-	// MOD: ÷±Ω” π”√‘≠ º∑÷±Ê¬ £¨≤ª∏ƒ±‰≥ﬂ¥Á
-	QImage scaledImage = image.scaled(codecCtx->width, codecCtx->height, Qt::KeepAspectRatio);
+    QByteArray data;
+    QBuffer buffer(&data);
+    if (buffer.open(QIODevice::WriteOnly))
+    {
+        QImageWriter writer(&buffer, "jpeg");
+        writer.setQuality(95);
 
-	uint8_t* srcData[4] = { scaledImage.bits(), nullptr, nullptr, nullptr };
-	int srcLinesize[4] = { static_cast<int>(scaledImage.bytesPerLine()), 0, 0, 0 };
+        bool ret = writer.write(image);
+        if (!ret)
+        {
+            QString err = writer.errorString();
+            LogWidget::instance()->addLog(err, LogWidget::Info);
+            return;
+        }
 
-	// ◊™ªªÕºœÒ∏Ò Ω
-	sws_scale(swsCtx, srcData, srcLinesize, 0, codecCtx->height, frame->data, frame->linesize);
+        emit encodedPacketReady(data);
+    }
 
-	frame->pts = frameCounter++;
 
-	// ±‡¬Î∏√÷°
-	AVPacket* pkt = av_packet_alloc();
-	if (!pkt) {
-		LogWidget::instance()->addLog("Could not allocate AVPacket", LogWidget::Warning);
-		return;
-	}
+    /*
+    uint8_t* srcData[4] = { scaledImage.bits(), nullptr, nullptr, nullptr };
+    int srcLinesize[4] = { static_cast<int>(scaledImage.bytesPerLine()), 0, 0, 0 };
 
-	int ret = avcodec_send_frame(codecCtx, frame);
-	if (ret < 0) {
-		LogWidget::instance()->addLog("Error sending frame for encoding", LogWidget::Warning);
-		av_packet_free(&pkt);
-		return;
-	}
-	ret = avcodec_receive_packet(codecCtx, pkt);
-	if (ret == 0) {
-		QByteArray data(reinterpret_cast<const char*>(pkt->data), pkt->size);
-		emit encodedPacketReady(data);
-		av_packet_unref(pkt);
-		av_packet_free(&pkt);
-	}
-	else if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-		av_packet_free(&pkt);
-	}
-	else {
-		LogWidget::instance()->addLog("Error during encoding", LogWidget::Warning);
-		av_packet_free(&pkt);
-	}
+    // ËΩ¨Êç¢ÂõæÂÉèÊ†ºÂºè
+    sws_scale(swsCtx, srcData, srcLinesize, 0, codecCtx->height, frame->data, frame->linesize);
+
+    frame->pts = frameCounter++;
+
+    // ÁºñÁ†ÅËØ•Â∏ß
+    AVPacket* pkt = av_packet_alloc();
+    if (!pkt)
+    {
+        LogWidget::instance()->addLog("Could not allocate AVPacket", LogWidget::Warning);
+        return;
+    }
+
+    int ret = avcodec_send_frame(codecCtx, frame);
+    if (ret < 0)
+    {
+        LogWidget::instance()->addLog("Error sending frame for encoding", LogWidget::Warning);
+        av_packet_free(&pkt);
+        return;
+    }
+    ret = avcodec_receive_packet(codecCtx, pkt);
+    if (ret == 0)
+    {
+        QByteArray data(reinterpret_cast<const char*>(pkt->data), pkt->size);
+        emit encodedPacketReady(data);
+        av_packet_unref(pkt);
+        av_packet_free(&pkt);
+    }
+    else if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+    {
+        av_packet_free(&pkt);
+    }
+    else
+    {
+        LogWidget::instance()->addLog("Error during encoding", LogWidget::Warning);
+        av_packet_free(&pkt);
+    }
+    //*/
 }

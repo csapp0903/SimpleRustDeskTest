@@ -13,61 +13,73 @@
 
 LONG WINAPI MyUnhandledExceptionFilter(EXCEPTION_POINTERS* pExceptionPointers)
 {
-	// ¶¨Òå dump ÎÄ¼şÃû£¬½¨ÒéÊ¹ÓÃ¶¯Ì¬ÃüÃûÒÔÃâ¸²¸ÇÖ®Ç°µÄ dump ÎÄ¼ş
-	TCHAR dumpFileName[MAX_PATH] = _T("crash_dump.dmp");
+    // å®šä¹‰ dump æ–‡ä»¶åï¼Œå»ºè®®ä½¿ç”¨åŠ¨æ€å‘½åä»¥å…è¦†ç›–ä¹‹å‰çš„ dump æ–‡ä»¶
+    TCHAR dumpFileName[MAX_PATH] = _T("crash_dump.dmp");
 
-	// ´´½¨ dump ÎÄ¼ş
-	HANDLE hFile = CreateFile(dumpFileName, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (hFile != INVALID_HANDLE_VALUE) {
-		// ÉèÖÃ dump ²ÎÊı
-		MINIDUMP_EXCEPTION_INFORMATION dumpInfo;
-		dumpInfo.ThreadId = GetCurrentThreadId();
-		dumpInfo.ExceptionPointers = pExceptionPointers;
-		dumpInfo.ClientPointers = FALSE;
+    // åˆ›å»º dump æ–‡ä»¶
+    HANDLE hFile = CreateFile(dumpFileName, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        // è®¾ç½® dump å‚æ•°
+        MINIDUMP_EXCEPTION_INFORMATION dumpInfo;
+        dumpInfo.ThreadId = GetCurrentThreadId();
+        dumpInfo.ExceptionPointers = pExceptionPointers;
+        dumpInfo.ClientPointers = FALSE;
 
-		// Éú³É dump ÎÄ¼ş£¬MiniDumpNormal Éú³É×î»ù±¾µÄĞÅÏ¢
-		BOOL success = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile,
-			MiniDumpNormal, &dumpInfo, nullptr, nullptr);
-		if (success) {
-			_tprintf(_T("Dump file created: %s\n"), dumpFileName);
-		}
-		else {
-			_tprintf(_T("MiniDumpWriteDump failed. Error: %d\n"), GetLastError());
-		}
-		CloseHandle(hFile);
-	}
-	else {
-		_tprintf(_T("Failed to create dump file. Error: %d\n"), GetLastError());
-	}
+        // ç”Ÿæˆ dump æ–‡ä»¶ï¼ŒMiniDumpNormal ç”Ÿæˆæœ€åŸºæœ¬çš„ä¿¡æ¯
+        BOOL success = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile,
+                                         MiniDumpNormal, &dumpInfo, nullptr, nullptr);
+        if (success) {
+            _tprintf(_T("Dump file created: %s\n"), dumpFileName);
+        }
+        else {
+            _tprintf(_T("MiniDumpWriteDump failed. Error: %d\n"), GetLastError());
+        }
+        CloseHandle(hFile);
+    }
+    else {
+        _tprintf(_T("Failed to create dump file. Error: %d\n"), GetLastError());
+    }
 
-	// ·µ»Ø EXCEPTION_EXECUTE_HANDLER£¬ÏµÍ³½«ÖÕÖ¹³ÌĞò
-	return EXCEPTION_EXECUTE_HANDLER;
+    // è¿”å› EXCEPTION_EXECUTE_HANDLERï¼Œç³»ç»Ÿå°†ç»ˆæ­¢ç¨‹åº
+    return EXCEPTION_EXECUTE_HANDLER;
 }
 
 
-bool checkSingleInstance(const QString& key) {
-	static QSharedMemory sharedMem(key);
-	if (!sharedMem.create(1)) {
-		return false; // ÒÑÓĞÊµÀıÔÚÔËĞĞ
-	}
-	return true; // Ã»ÓĞÊµÀıÔÚÔËĞĞ
+bool checkSingleInstance(const QString& key)
+{
+    static QSharedMemory sharedMem(key);
+    if (!sharedMem.create(1))
+    {
+        return false; // å·²æœ‰å®ä¾‹åœ¨è¿è¡Œ
+    }
+    return true; // æ²¡æœ‰å®ä¾‹åœ¨è¿è¡Œ
 }
 
 int main(int argc, char *argv[])
 {
-	SetUnhandledExceptionFilter(MyUnhandledExceptionFilter);
+    SetUnhandledExceptionFilter(MyUnhandledExceptionFilter);
     QApplication a(argc, argv);
-	QDir::setCurrent(a.applicationDirPath());
-	QNetworkProxy::setApplicationProxy(QNetworkProxy::NoProxy);
-	const QString sharedMemoryKey = "DeskServerSharedMemory";
+    QDir::setCurrent(a.applicationDirPath());
 
-	QSharedMemory sharedMem(sharedMemoryKey);
-	if (!sharedMem.create(1)) {
-		return 0;
-	}
+    QNetworkProxy::setApplicationProxy(QNetworkProxy::NoProxy);
+    qRegisterMetaType<QHostAddress>("QHostAddress");
+
+    const QString sharedMemoryKey = "DeskServerSharedMemory";
+    QSharedMemory sharedMem(sharedMemoryKey);
+    if (!sharedMem.create(1))
+    {
+        return 0;
+    }
+
     DeskServer w;
-	// ½ûÖ¹×î´ó»¯
-	w.setWindowFlags(w.windowFlags() & ~Qt::WindowMaximizeButtonHint);
-    w.show();
+    // ç¦æ­¢æœ€å¤§åŒ–
+    w.setWindowFlags(w.windowFlags() & ~Qt::WindowMaximizeButtonHint);
+
+    bool shouldHide = QCoreApplication::arguments().contains("--hide");
+    if (!shouldHide)
+    {
+        w.show();
+    }
+
     return a.exec();
 }

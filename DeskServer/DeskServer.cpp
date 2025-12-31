@@ -5,249 +5,325 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QtNetwork/QHostInfo>
+#include <QBuffer>
 #include "LogWidget.h"
 
 DeskServer::DeskServer(QWidget* parent)
-	: QWidget(parent), m_peerClient(nullptr)
+    : QWidget(parent), m_peerClient(nullptr)
 {
-	ui.setupUi(this);
-	loadConfig();
-	LogWidget::instance()->init(ui.widget_2);
-	connect(ui.startButton_, &QPushButton::clicked, this, &DeskServer::onStartClicked);
-	ui.startButton_->setText("Start");
+    ui.setupUi(this);
+    loadConfig();
+    LogWidget::instance()->init(ui.widget_2);
+    connect(ui.startButton_, &QPushButton::clicked, this, &DeskServer::onStartClicked);
+    ui.startButton_->setText("Start");
+
+    QTimer::singleShot(5000, this, [this](){onStartClicked();});
+    QTimer::singleShot(7000, this, [this](){writeSharedMemory();});
 }
 
 DeskServer::~DeskServer()
 {
-	if (m_peerClient) {
-		m_peerClient->stop();
-		m_peerClient->deleteLater();
-	}
-	if (m_relayPeerClient) {
-		m_relayPeerClient->stop();
-		m_relayPeerClient->deleteLater();
-	}
+    if (m_peerClient)
+    {
+        m_peerClient->stop();
+        m_peerClient->deleteLater();
+    }
+    if (m_relayPeerClient)
+    {
+        m_relayPeerClient->stop();
+        m_relayPeerClient->deleteLater();
+    }
 }
-
 
 void DeskServer::loadConfig()
 {
-	QFile file("DeskServer.json");
-	QJsonObject config;
-	bool valid = false;
+    QFile file("DeskServer.json");
+    QJsonObject config;
+    bool valid = false;
 
-	if (file.exists()) {
-		if (file.open(QIODevice::ReadOnly)) {
-			QByteArray data = file.readAll();
-			file.close();
-			QJsonDocument doc = QJsonDocument::fromJson(data);
-			// Èç¹û JSON ¸ñÊ½ÕıÈ·ÇÒÊÇ¶ÔÏó£¬¾ÍÊ¹ÓÃÎÄ¼şÖĞµÄÅäÖÃ
-			if (!doc.isNull() && doc.isObject()) {
-				config = doc.object();
-				valid = true;
-			}
-		}
-	}
+    if (file.exists())
+    {
+        if (file.open(QIODevice::ReadOnly))
+        {
+            QByteArray data = file.readAll();
+            file.close();
+            QJsonDocument doc = QJsonDocument::fromJson(data);
+            // å¦‚æœ JSON æ ¼å¼æ­£ç¡®ä¸”æ˜¯å¯¹è±¡ï¼Œå°±ä½¿ç”¨æ–‡ä»¶ä¸­çš„é…ç½®
+            if (!doc.isNull() && doc.isObject())
+            {
+                config = doc.object();
+                valid = true;
+            }
+        }
+    }
 
-	// Èç¹ûÎÄ¼ş²»´æÔÚ»ò¸ñÊ½²»ÕıÈ·£¬Ôò²ÉÓÃÄ¬ÈÏÅäÖÃ
-	if (!valid) {
-		config["server"] = QJsonObject{
-			{"ip", "127.0.0.1"},
-			{"port", 21116}
-		};
-		config["relay"] = QJsonObject{
-			{"ip", "127.0.0.1"},
-			{"port", 21117}
-		};
-		// Ä¬ÈÏÇé¿öÏÂÉú³ÉÒ»¸öĞÂµÄ uuid
-		config["uuid"] = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    // å¦‚æœæ–‡ä»¶ä¸å­˜åœ¨æˆ–æ ¼å¼ä¸æ­£ç¡®ï¼Œåˆ™é‡‡ç”¨é»˜è®¤é…ç½®
+    if (!valid)
+    {
+        config["server"] = QJsonObject{
+            {"ip", "127.0.0.1"},
+            {"port", 21116}
+        };
+        config["relay"] = QJsonObject{
+            {"ip", "127.0.0.1"},
+            {"port", 21117}
+        };
+        // é»˜è®¤æƒ…å†µä¸‹ç”Ÿæˆä¸€ä¸ªæ–°çš„ uuid
+        config["uuid"] = QUuid::createUuid().toString(QUuid::WithoutBraces);
 
-		// Ğ´ÈëÄ¬ÈÏÅäÖÃµ½ÎÄ¼ş
-		if (file.open(QIODevice::WriteOnly)) {
-			QJsonDocument doc(config);
-			file.write(doc.toJson());
-			file.close();
-		}
-		else {
-			qWarning() << "Could not create or write to configuration file.";
-		}
-	}
+        // å†™å…¥é»˜è®¤é…ç½®åˆ°æ–‡ä»¶
+        if (file.open(QIODevice::WriteOnly))
+        {
+            QJsonDocument doc(config);
+            file.write(doc.toJson());
+            file.close();
+        }
+        else
+        {
+            qWarning() << "Could not create or write to configuration file.";
+        }
+    }
 
-	// ´ÓÅäÖÃÖĞ¶ÁÈ¡Öµ
-	QJsonObject serverObj = config["server"].toObject();
-	QJsonObject relayObj = config["relay"].toObject();
-	m_uuidStr = config["uuid"].toString() == "" ? QUuid::createUuid().toString(QUuid::WithoutBraces): config["uuid"].toString();
+    // ä»é…ç½®ä¸­è¯»å–å€¼
+    QJsonObject serverObj = config["server"].toObject();
+    QJsonObject relayObj = config["relay"].toObject();
+    m_uuidStr = config["uuid"].toString() == "" ? QUuid::createUuid().toString(QUuid::WithoutBraces): config["uuid"].toString();
 
-	// ÉèÖÃ UI ÊäÈë¿òµÄÄ¬ÈÏÖµ
-	ui.iPLineEdit->setText(serverObj["ip"].toString("127.0.0.1"));
-	ui.portLineEdit_->setText(QString::number(serverObj["port"].toInt(21116)));
-	ui.iPLineEdit_3->setText(relayObj["ip"].toString("127.0.0.1"));
-	ui.portLineEdit_2->setText(QString::number(relayObj["port"].toInt(21117)));
+    // è®¾ç½® UI è¾“å…¥æ¡†çš„é»˜è®¤å€¼
+    ui.iPLineEdit->setText(serverObj["ip"].toString("127.0.0.1"));
+    ui.portLineEdit_->setText(QString::number(serverObj["port"].toInt(21116)));
+    ui.iPLineEdit_3->setText(relayObj["ip"].toString("127.0.0.1"));
+    ui.portLineEdit_2->setText(QString::number(relayObj["port"].toInt(21117)));
 }
 
-
-// ±£´æµ±Ç°ÅäÖÃµ½ÎÄ¼ş
+// ä¿å­˜å½“å‰é…ç½®åˆ°æ–‡ä»¶
 void DeskServer::saveConfig()
 {
-	QJsonObject config;
-	QJsonObject serverObj;
-	serverObj["ip"] = ui.iPLineEdit->text().trimmed();
-	serverObj["port"] = ui.portLineEdit_->text().toInt();
-	QJsonObject relayObj;
-	relayObj["ip"] = ui.iPLineEdit_3->text().trimmed();
-	relayObj["port"] = ui.portLineEdit_2->text().toInt();
+    QJsonObject config;
+    QJsonObject serverObj;
+    serverObj["ip"] = ui.iPLineEdit->text().trimmed();
+    serverObj["port"] = ui.portLineEdit_->text().toInt();
+    QJsonObject relayObj;
+    relayObj["ip"] = ui.iPLineEdit_3->text().trimmed();
+    relayObj["port"] = ui.portLineEdit_2->text().toInt();
 
-	config["server"] = serverObj;
-	config["relay"] = relayObj;
+    config["server"] = serverObj;
+    config["relay"] = relayObj;
 
-	config["uuid"] = m_uuidStr;
+    config["uuid"] = m_uuidStr;
 
-	QJsonDocument doc(config);
-	QFile file("DeskServer.json");
-	if (file.open(QIODevice::WriteOnly)) {
-		file.write(doc.toJson());
-		file.close();
-	}
+    QJsonDocument doc(config);
+    QFile file("DeskServer.json");
+    if (file.open(QIODevice::WriteOnly))
+    {
+        file.write(doc.toJson());
+        file.close();
+    }
+}
+
+void DeskServer::writeSharedMemory()
+{
+    LogWidget::instance()->addLog("Func writeSharedMemory", LogWidget::Info);
+
+    QString serverIP = ui.iPLineEdit->text().trimmed();
+    QString serverPort = ui.portLineEdit_->text();
+
+    QString relayIP = ui.iPLineEdit_3->text().trimmed();
+    QString relayPort = ui.portLineEdit_2->text();
+
+    QString uuid = m_uuidStr;
+
+    //QString data = QString("serverIP:%1;;serverPort:%2;;relayIP:%3;;relayPort:%4;;uuid:%5;;")
+    //                   .arg(serverIP, serverPort, relayIP, relayPort, uuid);
+    QString data = QString("IP:%1;;PORT:%2;;UUID:%3;;")
+                       .arg(serverIP, serverPort, uuid);
+
+    m_shared.setKey("VVRemoteMemory");
+    if (!m_shared.create(1024))
+    {
+        LogWidget::instance()->addLog("QSharedMemory create error:" + m_shared.errorString(), LogWidget::Warning);
+        if (m_shared.error() == QSharedMemory::AlreadyExists)
+        {
+            m_shared.attach();
+        }
+    }
+
+    m_shared.lock();
+    QBuffer buffer;
+    buffer.open(QBuffer::WriteOnly);
+    QDataStream out(&buffer);
+    out << data;
+    memcpy(m_shared.data(), buffer.data().constData(), qMin(m_shared.size(), (int)buffer.size()));
+    m_shared.unlock();
+
+
+    QSharedMemory shared("VVRemoteMemory");
+    if (!shared.attach())
+    {
+        LogWidget::instance()->addLog("QSharedMemory attach error:" + shared.errorString(), LogWidget::Warning);
+    }
+
+    shared.lock();
+    QByteArray data1((char*)shared.constData(), shared.size());
+    QBuffer buffer1(&data1);
+    buffer1.open(QBuffer::ReadOnly);
+    QDataStream in(&buffer1);
+    QString result;
+    in >> result;
+    shared.unlock();
+
+    LogWidget::instance()->addLog("QSharedMemory result:" + result, LogWidget::Info);
 }
 
 void DeskServer::onStartClicked()
 {
-	if (!m_peerClient) {
-		QString ip = ui.iPLineEdit->text().trimmed();
-		int port = ui.portLineEdit_->text().toInt();
-		if (ip.isEmpty() || port <= 0) {
-			LogWidget::instance()->addLog("IP or Port is invalid", LogWidget::Error);
-			return;
-		}
+    if (!m_peerClient)
+    {
+        QString ip = ui.iPLineEdit->text().trimmed();
+        int port = ui.portLineEdit_->text().toInt();
+        if (ip.isEmpty() || port <= 0)
+        {
+            LogWidget::instance()->addLog("IP or Port is invalid", LogWidget::Error);
+            return;
+        }
 
-		// ³¢ÊÔ½âÎöÓÃ»§ÊäÈë£¬Ö§³Ö URL »òÓòÃû¸ñÊ½
-		QUrl url = QUrl::fromUserInput(ip);
-		// Èç¹û½âÎöºóµÄ host ²»Îª¿Õ£¬ËµÃ÷ÊäÈëÁË URL ¸ñÊ½£¬È¡³ö host£¬·ñÔòÖ±½ÓÊ¹ÓÃÊäÈë
-		QString host = url.host().isEmpty() ? ip : url.host();
-		QHostAddress resolvedAddress;
-		// ÏÈ³¢ÊÔÖ±½Ó×ª»»³É IP µØÖ·
-		if (!resolvedAddress.setAddress(host)) {
-			// Èç¹û×ª»»Ê§°Ü£¬Ôò½øĞĞ DNS ½âÎö
-			QHostInfo info = QHostInfo::fromName(host);
-			if (info.error() != QHostInfo::NoError || info.addresses().isEmpty()) {
-				LogWidget::instance()->addLog("Failed to resolve IP: " + host, LogWidget::Error);
-				return;
-			}
-			// ±éÀúµØÖ·ÁĞ±í£¬É¸Ñ¡ IPv4 µØÖ·
-			bool foundIPv4 = false;
-			for (const QHostAddress& address : info.addresses()) {
-				if (address.protocol() == QAbstractSocket::IPv4Protocol) {
-					resolvedAddress = address;
-					foundIPv4 = true;
-					break;
-				}
-			}
-			if (!foundIPv4) {
-				LogWidget::instance()->addLog("No IPv4 address found for Relay IP: " + host, LogWidget::Error);
-				return;
-			}
-		}
+        // å°è¯•è§£æç”¨æˆ·è¾“å…¥ï¼Œæ”¯æŒ URL æˆ–åŸŸåæ ¼å¼
+        QUrl url = QUrl::fromUserInput(ip);
+        // å¦‚æœè§£æåçš„ host ä¸ä¸ºç©ºï¼Œè¯´æ˜è¾“å…¥äº† URL æ ¼å¼ï¼Œå–å‡º hostï¼Œå¦åˆ™ç›´æ¥ä½¿ç”¨è¾“å…¥
+        QString host = url.host().isEmpty() ? ip : url.host();
+        QHostAddress resolvedAddress;
+        // å…ˆå°è¯•ç›´æ¥è½¬æ¢æˆ IP åœ°å€
+        if (!resolvedAddress.setAddress(host))
+        {
+            // å¦‚æœè½¬æ¢å¤±è´¥ï¼Œåˆ™è¿›è¡Œ DNS è§£æ
+            QHostInfo info = QHostInfo::fromName(host);
+            if (info.error() != QHostInfo::NoError || info.addresses().isEmpty()) {
+                LogWidget::instance()->addLog("Failed to resolve IP: " + host, LogWidget::Error);
+                return;
+            }
+            // éå†åœ°å€åˆ—è¡¨ï¼Œç­›é€‰ IPv4 åœ°å€
+            bool foundIPv4 = false;
+            for (const QHostAddress& address : info.addresses())
+            {
+                if (address.protocol() == QAbstractSocket::IPv4Protocol)
+                {
+                    resolvedAddress = address;
+                    foundIPv4 = true;
+                    break;
+                }
+            }
+            if (!foundIPv4) {
+                LogWidget::instance()->addLog("No IPv4 address found for Relay IP: " + host, LogWidget::Error);
+                return;
+            }
+        }
 
-		QString relayIP = ui.iPLineEdit_3->text().trimmed();
-		int relayPort = ui.portLineEdit_2->text().toInt();
-		if (relayIP.isEmpty() || relayPort <= 0) {
-			LogWidget::instance()->addLog("Relay IP or Relay Port is invalid", LogWidget::Error);
-			return;
-		}
+        QString relayIP = ui.iPLineEdit_3->text().trimmed();
+        int relayPort = ui.portLineEdit_2->text().toInt();
+        if (relayIP.isEmpty() || relayPort <= 0)
+        {
+            LogWidget::instance()->addLog("Relay IP or Relay Port is invalid", LogWidget::Error);
+            return;
+        }
 
-		// Í¬Ñù´¦Àí Relay IP
-		QUrl relayUrl = QUrl::fromUserInput(relayIP);
-		QString relayHost = relayUrl.host().isEmpty() ? relayIP : relayUrl.host();
-		QHostAddress resolvedRelayAddress;
-		if (!resolvedRelayAddress.setAddress(relayHost)) {
-			QHostInfo info = QHostInfo::fromName(relayHost);
-			if (info.error() != QHostInfo::NoError || info.addresses().isEmpty()) {
-				LogWidget::instance()->addLog("Failed to resolve Relay IP: " + relayHost, LogWidget::Error);
-				return;
-			}
-			// ±éÀúµØÖ·ÁĞ±í£¬É¸Ñ¡ IPv4 µØÖ·
-			bool foundIPv4 = false;
-			for (const QHostAddress& address : info.addresses()) {
-				if (address.protocol() == QAbstractSocket::IPv4Protocol) {
-					resolvedRelayAddress = address;
-					foundIPv4 = true;
-					break;
-				}
-			}
-			if (!foundIPv4) {
-				LogWidget::instance()->addLog("No IPv4 address found for Relay IP: " + relayHost, LogWidget::Error);
-				return;
-			}
-		}
+        // åŒæ ·å¤„ç† Relay IP
+        QUrl relayUrl = QUrl::fromUserInput(relayIP);
+        QString relayHost = relayUrl.host().isEmpty() ? relayIP : relayUrl.host();
+        QHostAddress resolvedRelayAddress;
+        if (!resolvedRelayAddress.setAddress(relayHost)) {
+            QHostInfo info = QHostInfo::fromName(relayHost);
+            if (info.error() != QHostInfo::NoError || info.addresses().isEmpty()) {
+                LogWidget::instance()->addLog("Failed to resolve Relay IP: " + relayHost, LogWidget::Error);
+                return;
+            }
+            // éå†åœ°å€åˆ—è¡¨ï¼Œç­›é€‰ IPv4 åœ°å€
+            bool foundIPv4 = false;
+            for (const QHostAddress& address : info.addresses()) {
+                if (address.protocol() == QAbstractSocket::IPv4Protocol) {
+                    resolvedRelayAddress = address;
+                    foundIPv4 = true;
+                    break;
+                }
+            }
+            if (!foundIPv4) {
+                LogWidget::instance()->addLog("No IPv4 address found for Relay IP: " + relayHost, LogWidget::Error);
+                return;
+            }
+        }
 
-		saveConfig();
-		m_peerClient = new PeerClient(m_uuidStr,this);
+        saveConfig();
+        m_peerClient = new PeerClient(m_uuidStr,this);
 
-		m_peerClient->setRelayInfo(relayHost, relayPort);
-		connect(m_peerClient, &PeerClient::registrationResult, this, &DeskServer::onRegistrationResult);
-		connect(m_peerClient, &PeerClient::errorOccurred, this, &DeskServer::onClientError);
-		m_peerClient->start(resolvedAddress, static_cast<quint16>(port));
-		ui.iPLineEdit->setEnabled(false);
-		ui.portLineEdit_->setEnabled(false);
-		ui.iPLineEdit_3->setEnabled(false);
-		ui.portLineEdit_2->setEnabled(false);
-		ui.startButton_->setText("Stop");
+        m_peerClient->setRelayInfo(relayHost, relayPort);
+        connect(m_peerClient, &PeerClient::registrationResult, this, &DeskServer::onRegistrationResult);
+        connect(m_peerClient, &PeerClient::errorOccurred, this, &DeskServer::onClientError);
+        m_peerClient->start(resolvedAddress, static_cast<quint16>(port));
+        ui.iPLineEdit->setEnabled(false);
+        ui.portLineEdit_->setEnabled(false);
+        ui.iPLineEdit_3->setEnabled(false);
+        ui.portLineEdit_2->setEnabled(false);
+        ui.startButton_->setText("Stop");
 
-		m_relayPeerClient = new RelayPeerClient(this);
-		connect(m_relayPeerClient, &RelayPeerClient::heartbeatResponseReceived, this, [this]() {
-			m_peerClient->setRelayStatus(true);
-			ui.label_8->setText("Online");
-			});
-		connect(m_relayPeerClient, &RelayPeerClient::errorOccurred, this, [this](const QString& errorString) {
-			m_peerClient->setRelayStatus(false);
-			ui.label_8->setText("Offline");
-			LogWidget::instance()->addLog(errorString, LogWidget::Warning);
-			});
-		m_relayPeerClient->start(resolvedRelayAddress, static_cast<quint16>(relayPort));
-	}
-	else {
-		// Í£Ö¹Âß¼­
-		m_peerClient->stop();
-		m_peerClient->deleteLater();
-		m_peerClient = nullptr;
-		if (m_relayPeerClient) {
-			m_relayPeerClient->stop();
-			m_relayPeerClient->deleteLater();
-			m_relayPeerClient = nullptr;
-		}
-		ui.iPLineEdit->setEnabled(true);
-		ui.portLineEdit_->setEnabled(true);
-		ui.iPLineEdit_3->setEnabled(true);
-		ui.portLineEdit_2->setEnabled(true);
-		ui.startButton_->setText("Start");
-	}
+        m_relayPeerClient = new RelayPeerClient(this);
+        connect(m_relayPeerClient, &RelayPeerClient::heartbeatResponseReceived, this, [this]() {
+            m_peerClient->setRelayStatus(true);
+            ui.label_8->setText("Online");
+        });
+        connect(m_relayPeerClient, &RelayPeerClient::errorOccurred, this, [this](const QString& errorString) {
+            m_peerClient->setRelayStatus(false);
+            ui.label_8->setText("Offline");
+            LogWidget::instance()->addLog(errorString, LogWidget::Warning);
+        });
+        m_relayPeerClient->start(resolvedRelayAddress, static_cast<quint16>(relayPort));
+    }
+    else
+    {
+        // åœæ­¢é€»è¾‘
+        m_peerClient->stop();
+        m_peerClient->deleteLater();
+        m_peerClient = nullptr;
+        if (m_relayPeerClient)
+        {
+            m_relayPeerClient->stop();
+            m_relayPeerClient->deleteLater();
+            m_relayPeerClient = nullptr;
+        }
+        ui.iPLineEdit->setEnabled(true);
+        ui.portLineEdit_->setEnabled(true);
+        ui.iPLineEdit_3->setEnabled(true);
+        ui.portLineEdit_2->setEnabled(true);
+        ui.startButton_->setText("Start");
+    }
 }
 
 void DeskServer::updateStatus(bool online)
 {
-	if (online) {
-		ui.label_3->setText("Online");
-	}
-	else {
-		ui.label_3->setText("Offline");
-	}
+    if (online)
+    {
+        ui.label_3->setText("Online");
+    }
+    else
+    {
+        ui.label_3->setText("Offline");
+    }
 }
-
 
 void DeskServer::onRegistrationResult(int result)
 {
-	if (result == 0) {
-		LogWidget::instance()->addLog(" Registration successful", LogWidget::Info);
-		updateStatus(true);
-	}
-	else {
-		LogWidget::instance()->addLog(QString(" Registration failed %1").arg(result),LogWidget::Warning);
-		updateStatus(false);
-	}
+    if (result == 0)
+    {
+        LogWidget::instance()->addLog(" Registration successful", LogWidget::Info);
+        updateStatus(true);
+    }
+    else
+    {
+        LogWidget::instance()->addLog(QString(" Registration failed %1").arg(result),LogWidget::Warning);
+        updateStatus(false);
+    }
 }
 
 void DeskServer::onClientError(const QString& errorString)
 {
-	LogWidget::instance()->addLog(errorString, LogWidget::Warning);
-	updateStatus(false);
+    LogWidget::instance()->addLog(errorString, LogWidget::Warning);
+    updateStatus(false);
 }

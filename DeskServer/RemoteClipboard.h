@@ -5,28 +5,30 @@
 #include <windows.h>
 #include "rendezvous.pb.h"
 
-class RemoteClipboard : public QObject {
-	Q_OBJECT
-public:
-	explicit RemoteClipboard(QObject* parent = nullptr);
-	~RemoteClipboard();
+class RemoteClipboard : public QObject
+{
+    Q_OBJECT
 
-	bool start();
-	void stop();
+public:
+    explicit RemoteClipboard(QObject* parent = nullptr);
+    ~RemoteClipboard();
+
+    bool start();
+    void stop();
 
 signals:
-	void ctrlCPressed(const ClipboardEvent& clipboardEvent);
+    void ctrlCPressed(const ClipboardEvent& clipboardEvent);
 
 public slots:
-	// ½ÓÊÕÔ¶³Ì´«À´µÄ ClipboardEvent ÏûÏ¢£¬²¢¸üĞÂÏµÍ³¼ôÌù°åÊı¾İ
-	void onClipboardMessageReceived(const ClipboardEvent& clipboardEvent);
+    // æ¥æ”¶è¿œç¨‹ä¼ æ¥çš„ ClipboardEvent æ¶ˆæ¯ï¼Œå¹¶æ›´æ–°ç³»ç»Ÿå‰ªè´´æ¿æ•°æ®
+    void onClipboardMessageReceived(const ClipboardEvent& clipboardEvent);
 
 private:
-	static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
-	LRESULT handleKeyEvent(int nCode, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
+    LRESULT handleKeyEvent(int nCode, WPARAM wParam, LPARAM lParam);
 
-	static HHOOK s_hook;
-	static RemoteClipboard* s_instance;
+    static HHOOK s_hook;
+    static RemoteClipboard* s_instance;
 };
 
 #endif // REMOTECLIPBOARD_H

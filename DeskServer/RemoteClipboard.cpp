@@ -13,140 +13,149 @@ HHOOK RemoteClipboard::s_hook = nullptr;
 RemoteClipboard* RemoteClipboard::s_instance = nullptr;
 
 RemoteClipboard::RemoteClipboard(QObject* parent)
-	: QObject(parent)
+    : QObject(parent)
 {
-	s_instance = this;
-
+    s_instance = this;
 }
 
 RemoteClipboard::~RemoteClipboard()
 {
-	stop();
-	s_instance = nullptr;
+    stop();
+    s_instance = nullptr;
 }
-
 
 bool RemoteClipboard::start()
 {
-	if (!s_hook) {
-		s_hook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(nullptr), 0);
-		if (!s_hook) {
-			LogWidget::instance()->addLog("RemoteClipboard: Failed to install global keyboard hook", LogWidget::Error);
-			return false;
-		}
-		LogWidget::instance()->addLog("RemoteClipboard: Global keyboard hook installed", LogWidget::Info);
-	}
-	return true;
+    if (!s_hook)
+    {
+        s_hook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(nullptr), 0);
+        if (!s_hook)
+        {
+            LogWidget::instance()->addLog("RemoteClipboard: Failed to install global keyboard hook", LogWidget::Error);
+            return false;
+        }
+        LogWidget::instance()->addLog("RemoteClipboard: Global keyboard hook installed", LogWidget::Info);
+    }
+    return true;
 }
 
 void RemoteClipboard::stop()
 {
-	if (s_hook) {
-		UnhookWindowsHookEx(s_hook);
-		s_hook = nullptr;
-		LogWidget::instance()->addLog("RemoteClipboard: Global keyboard hook removed", LogWidget::Info);
-	}
+    if (s_hook)
+    {
+        UnhookWindowsHookEx(s_hook);
+        s_hook = nullptr;
+        LogWidget::instance()->addLog("RemoteClipboard: Global keyboard hook removed", LogWidget::Info);
+    }
 }
 
 
 LRESULT CALLBACK RemoteClipboard::LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 {
-	if (s_instance) {
-		return s_instance->handleKeyEvent(nCode, wParam, lParam);
-	}
-	return CallNextHookEx(s_hook, nCode, wParam, lParam);
+    if (s_instance)
+    {
+        return s_instance->handleKeyEvent(nCode, wParam, lParam);
+    }
+    return CallNextHookEx(s_hook, nCode, wParam, lParam);
 }
 
 LRESULT RemoteClipboard::handleKeyEvent(int nCode, WPARAM wParam, LPARAM lParam)
 {
-	if (nCode == HC_ACTION) {
-		KBDLLHOOKSTRUCT* pKeyboard = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
-		// ½ö´¦Àí°´ÏÂÊÂ¼ş
-		if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
-			bool ctrlPressed = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-			if (ctrlPressed && pKeyboard->vkCode == 'C') {
-				// ¶ÁÈ¡¼ôÌù°åÊı¾İ£¬²¢¹¹Ôì ClipboardEvent
-				ClipboardEvent eventMsg;
-				QClipboard* clipboard = QApplication::clipboard();
-				const QMimeData* mimeData = clipboard->mimeData();
-				if (mimeData) {
-					// Èç¹û¼ôÌù°å°üº¬ÎÄ¼ş URL£¬ÔòÓÅÏÈ´¦ÀíÎÄ¼şÊı¾İ
-					if (mimeData->hasUrls() && !mimeData->urls().isEmpty()) {
-						QString filePath = mimeData->urls().first().toLocalFile();
-						QFile file(filePath);
-						if (file.open(QIODevice::ReadOnly)) {
-							QByteArray data = file.readAll();
-							file.close();
-							FileContent* fileContent = eventMsg.mutable_file();
-							fileContent->set_file_data(data.toStdString());
-							QFileInfo fileInfo(filePath);
-							fileContent->set_file_name(fileInfo.fileName().toStdString());
-							LogWidget::instance()->addLog(QString("RemoteClipboard: Captured file data: %1").arg(filePath), LogWidget::Info);
-						}
-						else {
-							LogWidget::instance()->addLog(QString("RemoteClipboard: Failed to open file: %1").arg(filePath), LogWidget::Error);
-						}
-					}
-					// ·ñÔò´¦ÀíÎÄ±¾Êı¾İ
-					else if (mimeData->hasText()) {
-						TextContent* textContent = eventMsg.mutable_text();
-						textContent->set_text_data(mimeData->text().toStdString());
-						LogWidget::instance()->addLog("RemoteClipboard: Captured text data", LogWidget::Info);
-					}
-					else {
-						LogWidget::instance()->addLog("RemoteClipboard: Unsupported clipboard data", LogWidget::Warning);
-					}
-				}
-				else {
-					LogWidget::instance()->addLog("RemoteClipboard: Clipboard is empty", LogWidget::Warning);
-				}
-				// Ê¹ÓÃ queued ·½Ê½·¢Éä´ø²ÎÊıµÄĞÅºÅ£¬È·±£ÔÚ Qt Ö÷Ïß³ÌÖĞ´¦Àí
-				QMetaObject::invokeMethod(this, "ctrlCPressed", Qt::QueuedConnection,
-					Q_ARG(ClipboardEvent, eventMsg));
-				LogWidget::instance()->addLog("RemoteClipboard: Global Ctrl+C detected and clipboard data captured", LogWidget::Info);
-				// ¿ÉÑ¡ÔñÀ¹½Ø´ËÊÂ¼ş£¬»ò·µ»Ø CallNextHookEx ¼ÌĞø´«µİ
-			}
-		}
-	}
-	return CallNextHookEx(s_hook, nCode, wParam, lParam);
+    if (nCode == HC_ACTION)
+    {
+        KBDLLHOOKSTRUCT* pKeyboard = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+        // ä»…å¤„ç†æŒ‰ä¸‹äº‹ä»¶
+        if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
+            bool ctrlPressed = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+            if (ctrlPressed && pKeyboard->vkCode == 'C') {
+                // è¯»å–å‰ªè´´æ¿æ•°æ®ï¼Œå¹¶æ„é€  ClipboardEvent
+                ClipboardEvent eventMsg;
+                QClipboard* clipboard = QApplication::clipboard();
+                const QMimeData* mimeData = clipboard->mimeData();
+                if (mimeData) {
+                    // å¦‚æœå‰ªè´´æ¿åŒ…å«æ–‡ä»¶ URLï¼Œåˆ™ä¼˜å…ˆå¤„ç†æ–‡ä»¶æ•°æ®
+                    if (mimeData->hasUrls() && !mimeData->urls().isEmpty()) {
+                        QString filePath = mimeData->urls().first().toLocalFile();
+                        QFile file(filePath);
+                        if (file.open(QIODevice::ReadOnly)) {
+                            QByteArray data = file.readAll();
+                            file.close();
+                            FileContent* fileContent = eventMsg.mutable_file();
+                            fileContent->set_file_data(data.toStdString());
+                            QFileInfo fileInfo(filePath);
+                            fileContent->set_file_name(fileInfo.fileName().toStdString());
+                            LogWidget::instance()->addLog(QString("RemoteClipboard: Captured file data: %1").arg(filePath), LogWidget::Info);
+                        }
+                        else {
+                            LogWidget::instance()->addLog(QString("RemoteClipboard: Failed to open file: %1").arg(filePath), LogWidget::Error);
+                        }
+                    }
+                    // å¦åˆ™å¤„ç†æ–‡æœ¬æ•°æ®
+                    else if (mimeData->hasText()) {
+                        TextContent* textContent = eventMsg.mutable_text();
+                        textContent->set_text_data(mimeData->text().toStdString());
+                        LogWidget::instance()->addLog("RemoteClipboard: Captured text data", LogWidget::Info);
+                    }
+                    else {
+                        LogWidget::instance()->addLog("RemoteClipboard: Unsupported clipboard data", LogWidget::Warning);
+                    }
+                }
+                else {
+                    LogWidget::instance()->addLog("RemoteClipboard: Clipboard is empty", LogWidget::Warning);
+                }
+                // ä½¿ç”¨ queued æ–¹å¼å‘å°„å¸¦å‚æ•°çš„ä¿¡å·ï¼Œç¡®ä¿åœ¨ Qt ä¸»çº¿ç¨‹ä¸­å¤„ç†
+                QMetaObject::invokeMethod(this, "ctrlCPressed", Qt::QueuedConnection,
+                                          Q_ARG(ClipboardEvent, eventMsg));
+                LogWidget::instance()->addLog("RemoteClipboard: Global Ctrl+C detected and clipboard data captured", LogWidget::Info);
+                // å¯é€‰æ‹©æ‹¦æˆªæ­¤äº‹ä»¶ï¼Œæˆ–è¿”å› CallNextHookEx ç»§ç»­ä¼ é€’
+            }
+        }
+    }
+
+    return CallNextHookEx(s_hook, nCode, wParam, lParam);
 }
 
 void RemoteClipboard::onClipboardMessageReceived(const ClipboardEvent& clipboardEvent)
 {
-	LogWidget::instance()->addLog("onClipboardMessageReceived", LogWidget::Error);
-	switch (clipboardEvent.event_case()) {
-	case ClipboardEvent::kText: {
-		// ´¦ÀíÎÄ±¾Êı¾İ
-		QString text = QString::fromStdString(clipboardEvent.text().text_data());
-		QApplication::clipboard()->setText(text);
-		LogWidget::instance()->addLog("RemoteClipboard: Updated clipboard with text data", LogWidget::Info);
-		break;
-	}
-	case ClipboardEvent::kFile: {
-		// ´¦ÀíÎÄ¼şÊı¾İ
-		const FileContent& fileContent = clipboardEvent.file();
-		QString fileName = QString::fromStdString(fileContent.file_name());
-		// ±£´æÎÄ¼şµ½ÁÙÊ±Ä¿Â¼
-		QString tempPath = QDir::tempPath() + "/" + fileName;
-		QFile file(tempPath);
-		if (file.open(QIODevice::WriteOnly)) {
-			file.write(QByteArray::fromStdString(fileContent.file_data()));
-			file.close();
-			LogWidget::instance()->addLog(QString("RemoteClipboard: File saved to %1").arg(tempPath), LogWidget::Info);
-			// ¸üĞÂ¼ôÌù°åÎªÎÄ¼ş URL£¬Ê¹µÃÕ³Ìù²Ù×÷¿ÉÒÔ»ñÈ¡¸ÃÎÄ¼ş
-			QMimeData* mimeData = new QMimeData;
-			QList<QUrl> urls;
-			urls.append(QUrl::fromLocalFile(tempPath));
-			mimeData->setUrls(urls);
-			QApplication::clipboard()->setMimeData(mimeData);
-		}
-		else {
-			LogWidget::instance()->addLog("RemoteClipboard: Failed to save file", LogWidget::Error);
-		}
-		break;
-	}
-	default:
-		LogWidget::instance()->addLog("RemoteClipboard: Received unknown clipboard event", LogWidget::Warning);
-		break;
-	}
+    LogWidget::instance()->addLog("onClipboardMessageReceived", LogWidget::Error);
+    switch (clipboardEvent.event_case())
+    {
+    case ClipboardEvent::kText:
+    {
+        // å¤„ç†æ–‡æœ¬æ•°æ®
+        QString text = QString::fromStdString(clipboardEvent.text().text_data());
+        QApplication::clipboard()->setText(text);
+        LogWidget::instance()->addLog("RemoteClipboard: Updated clipboard with text data", LogWidget::Info);
+        break;
+    }
+    case ClipboardEvent::kFile:
+    {
+        // å¤„ç†æ–‡ä»¶æ•°æ®
+        const FileContent& fileContent = clipboardEvent.file();
+        QString fileName = QString::fromStdString(fileContent.file_name());
+        // ä¿å­˜æ–‡ä»¶åˆ°ä¸´æ—¶ç›®å½•
+        QString tempPath = QDir::tempPath() + "/" + fileName;
+        QFile file(tempPath);
+        if (file.open(QIODevice::WriteOnly))
+        {
+            file.write(QByteArray::fromStdString(fileContent.file_data()));
+            file.close();
+            LogWidget::instance()->addLog(QString("RemoteClipboard: File saved to %1").arg(tempPath), LogWidget::Info);
+            // æ›´æ–°å‰ªè´´æ¿ä¸ºæ–‡ä»¶ URLï¼Œä½¿å¾—ç²˜è´´æ“ä½œå¯ä»¥è·å–è¯¥æ–‡ä»¶
+            QMimeData* mimeData = new QMimeData;
+            QList<QUrl> urls;
+            urls.append(QUrl::fromLocalFile(tempPath));
+            mimeData->setUrls(urls);
+            QApplication::clipboard()->setMimeData(mimeData);
+        }
+        else
+        {
+            LogWidget::instance()->addLog("RemoteClipboard: Failed to save file", LogWidget::Error);
+        }
+        break;
+    }
+    default:
+        LogWidget::instance()->addLog("RemoteClipboard: Received unknown clipboard event", LogWidget::Warning);
+        break;
+    }
 }

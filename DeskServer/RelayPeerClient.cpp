@@ -1,92 +1,103 @@
 #include "RelayPeerClient.h"
-#include "LogWidget.h"  // Ê¹ÓÃ LogWidget ¼ÇÂ¼ÈÕÖ¾
+#include "LogWidget.h"  // ä½¿ç”¨ LogWidget è®°å½•æ—¥å¿—
 #include "rendezvous.pb.h"
 
 RelayPeerClient::RelayPeerClient(QObject* parent)
-	: QObject(parent),
-	m_udpSocket(new QUdpSocket(this)),
-	m_relayPort(0),
-	m_heartbeatTimer(new QTimer(this))
+    : QObject(parent),
+    m_udpSocket(new QUdpSocket(this)),
+    m_relayPort(0),
+    m_heartbeatTimer(new QTimer(this))
 {
-	// °ó¶¨¶ÁÈ¡Êı¾İ²Û
-	connect(m_udpSocket, &QUdpSocket::readyRead, this, &RelayPeerClient::onReadyRead);
-	// ÉèÖÃ¶¨Ê±Æ÷£¬¼ÙÉèÃ¿ 5 Ãë·¢ËÍÒ»´Î heartbeat
-	m_heartbeatTimer->setInterval(5000);
-	connect(m_heartbeatTimer, &QTimer::timeout, this, &RelayPeerClient::sendHeartbeat);
+    // ç»‘å®šè¯»å–æ•°æ®æ§½
+    connect(m_udpSocket, &QUdpSocket::readyRead, this, &RelayPeerClient::onReadyRead);
+    // è®¾ç½®å®šæ—¶å™¨ï¼Œå‡è®¾æ¯ 5 ç§’å‘é€ä¸€æ¬¡ heartbeat
+    m_heartbeatTimer->setInterval(5000);
+    connect(m_heartbeatTimer, &QTimer::timeout, this, &RelayPeerClient::sendHeartbeat);
 }
 
 RelayPeerClient::~RelayPeerClient()
 {
-	stop();
+    stop();
 }
 
 void RelayPeerClient::start(const QHostAddress& relayAddress, quint16 relayPort)
 {
-	m_isAlive = true;
-	m_relayAddress = relayAddress;
-	m_relayPort = relayPort;
+    m_isAlive = true;
+    m_relayAddress = relayAddress;
+    m_relayPort = relayPort;
 
-	// °ó¶¨µ½ÈÎÒâ¿ÉÓÃ¶Ë¿Ú
-	if (!m_udpSocket->bind(QHostAddress::Any, 0)) {
-		emit errorOccurred("Failed to bind UDP socket");
-		return;
-	}
-	// Á¢¼´·¢ËÍÒ»´Î Heartbeat
-	sendHeartbeat();
-	// Æô¶¯¶¨Ê±Æ÷
-	m_heartbeatTimer->start();
-	LogWidget::instance()->addLog("Started RelayPeerClient heartbeat", LogWidget::Info);
+    LogWidget::instance()->addLog(QString("QHostAddress 0 %1%2").arg(relayAddress.toString()).arg(relayPort), LogWidget::Debug);
+    // ç»‘å®šåˆ°ä»»æ„å¯ç”¨ç«¯å£
+    if (!m_udpSocket->bind(QHostAddress::AnyIPv4, 0, QAbstractSocket::DefaultForPlatform))
+    {
+        LogWidget::instance()->addLog("Failed to bind UDP socket", LogWidget::Warning);
+        emit errorOccurred("Failed to bind UDP socket");
+        return;
+    }
+
+    // ç«‹å³å‘é€ä¸€æ¬¡ Heartbeat
+    sendHeartbeat();
+    // å¯åŠ¨å®šæ—¶å™¨
+    m_heartbeatTimer->start();
+    LogWidget::instance()->addLog("Started RelayPeerClient heartbeat", LogWidget::Info);
 }
 
 void RelayPeerClient::stop()
 {
-	if (m_heartbeatTimer->isActive())
-		m_heartbeatTimer->stop();
-	m_udpSocket->close();
+    if (m_heartbeatTimer->isActive())
+    {
+        m_heartbeatTimer->stop();
+    }
+    m_udpSocket->close();
 }
 
 void RelayPeerClient::sendHeartbeat()
 {
-	if (m_isAlive == false)
-	{
-		emit errorOccurred("Heartbeat message not responsed");
-	}
-	m_isAlive = false;
+    if (m_isAlive == false)
+    {
+        emit errorOccurred("Heartbeat message not responsed");
+    }
+    m_isAlive = false;
 
-	// ¹¹Ôì Heartbeat ÏûÏ¢
-	RendezvousMessage msg;
-	msg.mutable_heartbeat();  // ÉèÖÃ heartbeat ×Ö¶Î
+    // æ„é€  Heartbeat æ¶ˆæ¯
+    RendezvousMessage msg;
+    msg.mutable_heartbeat(); // è®¾ç½® heartbeat å­—æ®µ
 
-	std::string outStr;
-	if (!msg.SerializeToString(&outStr)) {
-		emit errorOccurred("Failed to serialize Heartbeat message");
-		return;
-	}
-	QByteArray data(outStr.data(), static_cast<int>(outStr.size()));
-	qint64 bytesSent = m_udpSocket->writeDatagram(data, m_relayAddress, m_relayPort);
-	if (bytesSent == -1) {
-		emit errorOccurred("Failed to send Heartbeat datagram");
-	}
+    std::string outStr;
+    if (!msg.SerializeToString(&outStr)) {
+        emit errorOccurred("Failed to serialize Heartbeat message");
+        return;
+    }
+    QByteArray data(outStr.data(), static_cast<int>(outStr.size()));
+    qint64 bytesSent = m_udpSocket->writeDatagram(data, m_relayAddress, m_relayPort);
+    if (bytesSent == -1)
+    {
+        emit errorOccurred("Failed to send Heartbeat datagram");
+    }
 }
 
 void RelayPeerClient::onReadyRead()
 {
-	while (m_udpSocket->hasPendingDatagrams()) {
-		QByteArray datagram;
-		datagram.resize(m_udpSocket->pendingDatagramSize());
-		QHostAddress sender;
-		quint16 senderPort;
-		m_udpSocket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
+    while (m_udpSocket->hasPendingDatagrams())
+    {
+        QByteArray datagram;
+        datagram.resize(m_udpSocket->pendingDatagramSize());
+        QHostAddress sender;
+        quint16 senderPort;
+        m_udpSocket->readDatagram(datagram.data(), datagram.size(), &sender, &senderPort);
 
-		RendezvousMessage response;
-		if (response.ParseFromArray(datagram.data(), datagram.size())) {
-			if (response.has_heartbeat()) {
-				m_isAlive = true;
-				emit heartbeatResponseReceived();
-			}
-		}
-		else {
-			emit errorOccurred("Failed to parse Heartbeat response");
-		}
-	}
+        RendezvousMessage response;
+        if (response.ParseFromArray(datagram.data(), datagram.size()))
+        {
+            if (response.has_heartbeat())
+            {
+                m_isAlive = true;
+                emit heartbeatResponseReceived();
+            }
+        }
+        else
+        {
+            emit errorOccurred("Failed to parse Heartbeat response");
+        }
+    }
 }
