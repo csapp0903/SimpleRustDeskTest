@@ -312,26 +312,26 @@ void ScreenCaptureEncoder::captureAndEncode()
     QImage scaledImage = dxgImg.scaled(codecCtx->width, codecCtx->height, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     QImage image = scaledImage.convertToFormat(QImage::Format_ARGB32);
 
-    QByteArray data;
-    QBuffer buffer(&data);
-    if (buffer.open(QIODevice::WriteOnly))
-    {
-        QImageWriter writer(&buffer, "jpeg");
-        writer.setQuality(95);
+    // QByteArray data;
+    // QBuffer buffer(&data);
+    // if (buffer.open(QIODevice::WriteOnly))
+    // {
+    //     QImageWriter writer(&buffer, "jpeg");
+    //     writer.setQuality(95);
 
-        bool ret = writer.write(image);
-        if (!ret)
-        {
-            QString err = writer.errorString();
-            LogWidget::instance()->addLog(err, LogWidget::Info);
-            return;
-        }
+    //     bool ret = writer.write(image);
+    //     if (!ret)
+    //     {
+    //         QString err = writer.errorString();
+    //         LogWidget::instance()->addLog(err, LogWidget::Info);
+    //         return;
+    //     }
 
-        emit encodedPacketReady(data);
-    }
+    //     emit encodedPacketReady(data);
+    // }
 
 
-    /*
+
     uint8_t* srcData[4] = { scaledImage.bits(), nullptr, nullptr, nullptr };
     int srcLinesize[4] = { static_cast<int>(scaledImage.bytesPerLine()), 0, 0, 0 };
 
@@ -372,5 +372,5 @@ void ScreenCaptureEncoder::captureAndEncode()
         LogWidget::instance()->addLog("Error during encoding", LogWidget::Warning);
         av_packet_free(&pkt);
     }
-    //*/
+    //
 }
