@@ -38,11 +38,13 @@ ScreenCaptureEncoder::ScreenCaptureEncoder(QObject* parent)
     }
 
     // MOD: 降低比特率，从原来的 width*height*4 调整为 width*height*2
-    codecCtx->bit_rate = screenSize.width() * screenSize.height() * 1.5;
+    //codecCtx->bit_rate = screenSize.width() * screenSize.height() * 1.5;
+    codecCtx->bit_rate = 2400000;
     // 设置最大和最小码率，防止码率突发导致网络拥塞
-    codecCtx->rc_min_rate = codecCtx->bit_rate;
-    codecCtx->rc_max_rate = codecCtx->bit_rate;
-    codecCtx->rc_buffer_size = (int)codecCtx->bit_rate;
+    //codecCtx->rc_min_rate = codecCtx->bit_rate;
+    codecCtx->rc_max_rate = 2400000;
+    //codecCtx->rc_buffer_size = (int)codecCtx->bit_rate;
+    codecCtx->rc_buffer_size = 2400000;
 
     codecCtx->width = screenSize.width();
     codecCtx->height = screenSize.height();
@@ -53,8 +55,8 @@ ScreenCaptureEncoder::ScreenCaptureEncoder(QObject* parent)
     // MOD: 降低帧率到20fps（原来30fps）
     codecCtx->time_base = AVRational{ 1, FRAME_FPS };
     codecCtx->framerate = AVRational{ FRAME_FPS, 1 };
-    codecCtx->gop_size = 10;
-    codecCtx->max_b_frames = 1;
+    codecCtx->gop_size = 40;
+    codecCtx->max_b_frames = 0;
     codecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
 
     // 设置低延迟预设和零延迟调优
@@ -172,17 +174,24 @@ void ScreenCaptureEncoder::reinitializeEncoder(int newWidth, int newHeight)
     // codecCtx->gop_size = 10;
     // codecCtx->max_b_frames = 1;
     // codecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
-    codecCtx->bit_rate = (int64_t)(newSize.width() * newSize.height() * 1.5);
-    codecCtx->rc_min_rate = codecCtx->bit_rate;
-    codecCtx->rc_max_rate = codecCtx->bit_rate;
-    codecCtx->rc_buffer_size = (int)codecCtx->bit_rate;
+    // codecCtx->bit_rate = (int64_t)(newSize.width() * newSize.height() * 1.5);
+    // codecCtx->rc_min_rate = codecCtx->bit_rate;
+    // codecCtx->rc_max_rate = codecCtx->bit_rate;
+    // codecCtx->rc_buffer_size = (int)codecCtx->bit_rate;
+    //codecCtx->bit_rate = screenSize.width() * screenSize.height() * 1.5;
+    codecCtx->bit_rate = 2400000;
+    // 设置最大和最小码率，防止码率突发导致网络拥塞
+    //codecCtx->rc_min_rate = codecCtx->bit_rate;
+    codecCtx->rc_max_rate = 2400000;
+    //codecCtx->rc_buffer_size = (int)codecCtx->bit_rate;
+    codecCtx->rc_buffer_size = 2400000;
 
     codecCtx->width = newSize.width();
     codecCtx->height = newSize.height();
     codecCtx->time_base = AVRational{ 1, FRAME_FPS }; // MOD: 20fps
     codecCtx->framerate = AVRational{ FRAME_FPS, 1 };
-    codecCtx->gop_size = 10;
-    codecCtx->max_b_frames = 1;
+    codecCtx->gop_size = 40;
+    codecCtx->max_b_frames = 0;
     codecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
 
     // 强制单线程
@@ -307,6 +316,9 @@ void ScreenCaptureEncoder::stopCapture()
 
 void ScreenCaptureEncoder::captureAndEncode()
 {
+    QElapsedTimer timer;
+    timer.start(); // 开始计时
+
     QSize currentScreenSize = getFixedSize();
     if (currentScreenSize.isEmpty())
     {
@@ -397,4 +409,13 @@ void ScreenCaptureEncoder::captureAndEncode()
         av_packet_free(&pkt);
     }
     //
+
+    if (pkt && pkt->size > 0) {
+        LogWidget::instance()->addLog(
+            QString("[Windows-Encoder] TimeCost: %1 ms, PacketSize: %2 bytes")
+                .arg(timer.elapsed())
+                .arg(pkt->size),
+            LogWidget::Info
+            );
+    }
 }

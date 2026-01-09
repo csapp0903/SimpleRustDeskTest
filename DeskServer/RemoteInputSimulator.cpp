@@ -25,6 +25,12 @@ RemoteInputSimulator::RemoteInputSimulator(QObject* parent)
 
 void RemoteInputSimulator::handleMouseEvent(int x, int y, int mask, int value)
 {
+    // --- 添加日志 ---
+    LogWidget::instance()->addLog(
+        QString("[Windows-Input] Executing Mouse: x=%1, y=%2").arg(x).arg(y),
+        LogWidget::Info
+        );
+
     LogWidget::instance()->addLog("handleMouseEvent------"+QString::number(x), LogWidget::Debug);
 
     // 获取当前前台窗口,并尝试激活
