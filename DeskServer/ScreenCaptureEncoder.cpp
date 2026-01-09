@@ -38,9 +38,18 @@ ScreenCaptureEncoder::ScreenCaptureEncoder(QObject* parent)
     }
 
     // MOD: 降低比特率，从原来的 width*height*4 调整为 width*height*2
-    codecCtx->bit_rate = screenSize.width() * screenSize.height() * 2;
+    codecCtx->bit_rate = screenSize.width() * screenSize.height() * 1.5;
+    // 设置最大和最小码率，防止码率突发导致网络拥塞
+    codecCtx->rc_min_rate = codecCtx->bit_rate;
+    codecCtx->rc_max_rate = codecCtx->bit_rate;
+    codecCtx->rc_buffer_size = (int)codecCtx->bit_rate;
+
     codecCtx->width = screenSize.width();
     codecCtx->height = screenSize.height();
+
+    // 强制单线程编码，降低编码延迟
+    codecCtx->thread_count = 1;
+
     // MOD: 降低帧率到20fps（原来30fps）
     codecCtx->time_base = AVRational{ 1, FRAME_FPS };
     codecCtx->framerate = AVRational{ FRAME_FPS, 1 };
@@ -155,7 +164,19 @@ void ScreenCaptureEncoder::reinitializeEncoder(int newWidth, int newHeight)
 
     // MOD: 使用新的分辨率和调优参数（保持原分辨率不变）
     QSize newSize(newWidth, newHeight);
-    codecCtx->bit_rate = newSize.width() * newSize.height() * 2; // MOD: bit_rate调整
+    // codecCtx->bit_rate = newSize.width() * newSize.height() * 2; // MOD: bit_rate调整
+    // codecCtx->width = newSize.width();
+    // codecCtx->height = newSize.height();
+    // codecCtx->time_base = AVRational{ 1, FRAME_FPS }; // MOD: 20fps
+    // codecCtx->framerate = AVRational{ FRAME_FPS, 1 };
+    // codecCtx->gop_size = 10;
+    // codecCtx->max_b_frames = 1;
+    // codecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
+    codecCtx->bit_rate = (int64_t)(newSize.width() * newSize.height() * 1.5);
+    codecCtx->rc_min_rate = codecCtx->bit_rate;
+    codecCtx->rc_max_rate = codecCtx->bit_rate;
+    codecCtx->rc_buffer_size = (int)codecCtx->bit_rate;
+
     codecCtx->width = newSize.width();
     codecCtx->height = newSize.height();
     codecCtx->time_base = AVRational{ 1, FRAME_FPS }; // MOD: 20fps
@@ -163,6 +184,9 @@ void ScreenCaptureEncoder::reinitializeEncoder(int newWidth, int newHeight)
     codecCtx->gop_size = 10;
     codecCtx->max_b_frames = 1;
     codecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
+
+    // 强制单线程
+    codecCtx->thread_count = 1;
 
     av_opt_set(codecCtx->priv_data, "preset", "ultrafast", 0);
     av_opt_set(codecCtx->priv_data, "tune", "zerolatency", 0);
