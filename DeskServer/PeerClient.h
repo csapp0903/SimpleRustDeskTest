@@ -36,6 +36,7 @@ private slots:
     void onSocketError(QAbstractSocket::SocketError error);
     void onDisconnected();
     void attemptReconnect();
+    void onRelayDisconnected();
 
 private:
     void doConnect();

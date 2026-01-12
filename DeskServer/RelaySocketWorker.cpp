@@ -5,6 +5,7 @@ RelaySocketWorker::RelaySocketWorker(QObject* parent)
 {
     m_socket = new QTcpSocket(this);
     m_socket->setSocketOption(QAbstractSocket::KeepAliveOption, 1);
+    m_socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
     connect(m_socket, &QTcpSocket::connected, this, &RelaySocketWorker::socketConnected);
     connect(m_socket, &QTcpSocket::disconnected, this, &RelaySocketWorker::socketDisconnected);
     connect(m_socket, &QTcpSocket::readyRead, this, &RelaySocketWorker::onReadyRead);
@@ -20,9 +21,25 @@ RelaySocketWorker::~RelaySocketWorker()
     }
 }
 
+// void RelaySocketWorker::connectToHost(const QHostAddress& address, quint16 port)
+// {
+//     m_socket->connectToHost(address, port);
+// }
 void RelaySocketWorker::connectToHost(const QHostAddress& address, quint16 port)
 {
+    // 如果已经连接，先断开
+    if (m_socket->state() != QAbstractSocket::UnconnectedState)
+    {
+        m_socket->abort();
+    }
+
     m_socket->connectToHost(address, port);
+
+    // 设置连接超时（5秒）
+    if (!m_socket->waitForConnected(5000))
+    {
+        emit socketErrorOccurred("Connection timeout");
+    }
 }
 
 void RelaySocketWorker::sendData(const QByteArray& data)

@@ -61,6 +61,26 @@ void PeerClient::start(const QHostAddress& address, quint16 port)
     doConnect();
 }
 
+// void PeerClient::stop()
+// {
+//     m_isStopping = true;
+//     if (m_reconnectTimer->isActive())
+//     {
+//         m_reconnectTimer->stop();
+//     }
+//     if (m_socket)
+//     {
+//         m_socket->disconnectFromHost();
+//         m_socket->deleteLater();
+//         m_socket = nullptr;
+//     }
+//     if (m_relayManager)
+//     {
+//         m_relayManager->stop();
+//         m_relayManager->deleteLater();
+//         m_relayManager = nullptr;
+//     }
+// }
 void PeerClient::stop()
 {
     m_isStopping = true;
@@ -68,17 +88,18 @@ void PeerClient::stop()
     {
         m_reconnectTimer->stop();
     }
+    if (m_relayManager)
+    {
+        disconnect(m_relayManager, nullptr, this, nullptr);
+        m_relayManager->stop();
+        m_relayManager->deleteLater();
+        m_relayManager = nullptr;
+    }
     if (m_socket)
     {
         m_socket->disconnectFromHost();
         m_socket->deleteLater();
         m_socket = nullptr;
-    }
-    if (m_relayManager)
-    {
-        m_relayManager->stop();
-        m_relayManager->deleteLater();
-        m_relayManager = nullptr;
     }
 }
 
@@ -196,13 +217,29 @@ void PeerClient::onReadyRead()
             m_socket->flush();
             LogWidget::instance()->addLog("Sent PunchHoleSent message in response", LogWidget::Info);
 
+            // // If the result is OK, start the RelayManager to establish a TCP connection to the relay server.
+            // if (sent.result() == Result::OK)
+            // {
+            //     if (!m_relayManager)
+            //     {
+            //         m_relayManager = new RelayManager(this);
+            //     }
             // If the result is OK, start the RelayManager to establish a TCP connection to the relay server.
             if (sent.result() == Result::OK)
             {
-                if (!m_relayManager)
+                // 先清理旧的 RelayManager（如果存在）
+                if (m_relayManager)
                 {
-                    m_relayManager = new RelayManager(this);
+                    LogWidget::instance()->addLog("Cleaning up existing RelayManager before creating new one", LogWidget::Info);
+                    disconnect(m_relayManager, nullptr, this, nullptr);
+                    m_relayManager->stop();
+                    m_relayManager->deleteLater();
+                    m_relayManager = nullptr;
                 }
+
+                m_relayManager = new RelayManager(this);
+                // 连接 RelayManager 的断开信号
+                connect(m_relayManager, &RelayManager::disconnected, this, &PeerClient::onRelayDisconnected);
                 QUrl relayUrl = QUrl::fromUserInput(m_relayIP);
                 QString relayHost = relayUrl.host().isEmpty() ? m_relayIP : relayUrl.host();
 
@@ -277,5 +314,19 @@ void PeerClient::attemptReconnect()
     {
         LogWidget::instance()->addLog("Attempting to reconnect...", LogWidget::Info);
         doConnect();
+    }
+}
+
+void PeerClient::onRelayDisconnected()
+{
+    LogWidget::instance()->addLog("Relay connection disconnected, cleaning up RelayManager", LogWidget::Warning);
+
+    if (m_relayManager)
+    {
+        // 断开所有信号连接
+        disconnect(m_relayManager, nullptr, this, nullptr);
+        m_relayManager->stop();
+        m_relayManager->deleteLater();
+        m_relayManager = nullptr;
     }
 }

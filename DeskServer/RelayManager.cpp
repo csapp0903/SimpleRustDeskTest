@@ -60,37 +60,99 @@ void RelayManager::start(const QHostAddress& relayAddress, quint16 relayPort, co
     m_remoteClipboard->start();
 }
 
+// void RelayManager::stop()
+// {
+//     if (m_socketWorker)
+//     {
+//         QMetaObject::invokeMethod(m_socketWorker, "disconnectSocket", Qt::BlockingQueuedConnection);
+//     }
+//     if (m_socketThread)
+//     {
+//         m_socketThread->quit();
+//         m_socketThread->wait();
+//         m_socketThread->deleteLater();
+//         m_socketThread = nullptr;
+//         m_socketWorker = nullptr;
+//     }
+//     if (m_encoder)
+//     {
+//         QMetaObject::invokeMethod(m_encoder, "stopCapture", Qt::BlockingQueuedConnection);
+//     }
+//     if (m_encoderThread)
+//     {
+//         m_encoderThread->quit();
+//         m_encoderThread->wait();
+//         m_encoderThread->deleteLater();
+//         m_encoderThread = nullptr;
+//     }
+//     if (m_remoteClipboard)
+//     {
+//         m_remoteClipboard->stop();
+//         m_remoteClipboard->deleteLater();
+//         m_remoteClipboard = nullptr;
+//     }
+// }
 void RelayManager::stop()
 {
-    if (m_socketWorker)
-    {
-        QMetaObject::invokeMethod(m_socketWorker, "disconnectSocket", Qt::BlockingQueuedConnection);
-    }
-    if (m_socketThread)
-    {
-        m_socketThread->quit();
-        m_socketThread->wait();
-        m_socketThread->deleteLater();
-        m_socketThread = nullptr;
-        m_socketWorker = nullptr;
-    }
+    LogWidget::instance()->addLog("RelayManager::stop() called", LogWidget::Info);
+
+    // 先停止编码器，避免继续产生数据
     if (m_encoder)
     {
-        QMetaObject::invokeMethod(m_encoder, "stopCapture", Qt::BlockingQueuedConnection);
+        // 使用 QueuedConnection 而非 BlockingQueuedConnection，避免死锁
+        if (m_encoderThread && m_encoderThread->isRunning())
+        {
+            QMetaObject::invokeMethod(m_encoder, "stopCapture", Qt::BlockingQueuedConnection);
+        }
     }
     if (m_encoderThread)
     {
         m_encoderThread->quit();
-        m_encoderThread->wait();
+        if (!m_encoderThread->wait(3000))  // 最多等待3秒
+        {
+            LogWidget::instance()->addLog("RelayManager: Encoder thread did not stop in time, terminating", LogWidget::Warning);
+            m_encoderThread->terminate();
+            m_encoderThread->wait();
+        }
         m_encoderThread->deleteLater();
         m_encoderThread = nullptr;
+        m_encoder = nullptr;  // encoder 会被 deleteLater 自动删除
     }
+
+    // 停止剪贴板监控
     if (m_remoteClipboard)
     {
         m_remoteClipboard->stop();
         m_remoteClipboard->deleteLater();
         m_remoteClipboard = nullptr;
     }
+
+    // 最后断开网络连接
+    if (m_socketWorker)
+    {
+        if (m_socketThread && m_socketThread->isRunning())
+        {
+            QMetaObject::invokeMethod(m_socketWorker, "disconnectSocket", Qt::BlockingQueuedConnection);
+        }
+    }
+    if (m_socketThread)
+    {
+        m_socketThread->quit();
+        if (!m_socketThread->wait(3000))  // 最多等待3秒
+        {
+            LogWidget::instance()->addLog("RelayManager: Socket thread did not stop in time, terminating", LogWidget::Warning);
+            m_socketThread->terminate();
+            m_socketThread->wait();
+        }
+        m_socketThread->deleteLater();
+        m_socketThread = nullptr;
+        m_socketWorker = nullptr;  // worker 会被线程结束时自动删除
+    }
+
+    // 清空缓冲区
+    m_buffer.clear();
+
+    LogWidget::instance()->addLog("RelayManager::stop() completed", LogWidget::Info);
 }
 
 void RelayManager::onWorkerSocketConnected()
@@ -123,15 +185,34 @@ void RelayManager::onWorkerSocketConnected()
     }
 }
 
+// void RelayManager::onWorkerSocketDisconnected()
+// {
+//     LogWidget::instance()->addLog("RelayManager: TCP connection to relay server disconnected", LogWidget::Warning);
+//     emit disconnected();
+//     if (m_encoder)
+//     {
+//         m_encoder->stopCapture();
+//         LogWidget::instance()->addLog("RelayManager: Stopped screen encoding due to connection loss", LogWidget::Warning);
+//     }
+// }
 void RelayManager::onWorkerSocketDisconnected()
 {
     LogWidget::instance()->addLog("RelayManager: TCP connection to relay server disconnected", LogWidget::Warning);
-    emit disconnected();
+
+    // 停止编码器
     if (m_encoder)
     {
-        m_encoder->stopCapture();
+        QMetaObject::invokeMethod(m_encoder, "stopCapture", Qt::QueuedConnection);
         LogWidget::instance()->addLog("RelayManager: Stopped screen encoding due to connection loss", LogWidget::Warning);
     }
+
+    // 停止剪贴板监控
+    if (m_remoteClipboard)
+    {
+        m_remoteClipboard->stop();
+    }
+
+    emit disconnected();
 }
 
 void RelayManager::onWorkerSocketError(const QString& errMsg)
